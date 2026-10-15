@@ -1,0 +1,174 @@
+<div class="space-y-6">
+  <!-- หัวเรื่อง -->
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl text-neutral-content">รับออเดอร์</h1>
+      <p class="mt-1 text-neutral-content/75">เพิ่มออเดอร์ใหม่ และจัดการออเดอร์ประจำวัน</p>
+    </div>
+    
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-sm btn-accent btn-outline" (click)="simulateOrders()" [disabled]="simulating()">
+        @if(simulating()) { <span class="loading loading-spinner loading-xs"></span> }
+        จำลองออเดอร์
+      </button>
+      <button class="btn btn-sm btn-error btn-outline" (click)="clearAllOrders()" [disabled]="clearing()">
+        ล้างออเดอร์ทั้งหมด
+      </button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- ฝั่งซ้าย: ฟอร์มรับออเดอร์ -->
+    <div class="lg:col-span-1 panel p-5 h-fit space-y-4">
+      <h2 class="font-display text-xl text-primary border-b border-dashed border-base-content/20 pb-2">ฟอร์มรับออเดอร์ใหม่</h2>
+      
+      <!-- ค้นหาลูกค้า -->
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">เบอร์โทรลูกค้า (ค้นหา หรือ เพิ่มใหม่)</legend>
+        <div class="join w-full">
+          <input type="tel" class="input input-bordered join-item w-full" placeholder="เช่น 0812345678" [(ngModel)]="searchPhone" (keyup.enter)="checkCustomerPhone()" />
+          <button class="btn btn-primary join-item" (click)="checkCustomerPhone()" [disabled]="isSearchingPhone()">
+            @if(isSearchingPhone()) { <span class="loading loading-spinner loading-xs"></span> }
+            ค้นหา
+          </button>
+        </div>
+      </fieldset>
+
+      <form (ngSubmit)="submitOrder()" class="space-y-3 mt-4">
+        @if(existingCustomer()) {
+          <div class="alert alert-success py-2 text-sm shadow-sm">
+            ✅ พบข้อมูลลูกค้าเก่าในระบบ ระบบดึงข้อมูลให้อัตโนมัติ
+          </div>
+        }
+
+        <div class="grid grid-cols-2 gap-3">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">ชื่อ</legend>
+            <input type="text" class="input w-full" [(ngModel)]="form.first_name" name="first_name" [disabled]="!!existingCustomer()" required />
+          </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">นามสกุล</legend>
+            <input type="text" class="input w-full" [(ngModel)]="form.last_name" name="last_name" [disabled]="!!existingCustomer()" required />
+          </fieldset>
+        </div>
+
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ที่อยู่ (ไม่บังคับ)</legend>
+          <input type="text" class="input w-full" [(ngModel)]="form.address" name="address" [disabled]="!!existingCustomer()" />
+        </fieldset>
+
+        <div class="grid grid-cols-2 gap-3">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">ละติจูด</legend>
+            <input type="number" step="any" class="input w-full" [(ngModel)]="form.latitude" name="lat" [disabled]="!!existingCustomer()" />
+          </fieldset>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">ลองจิจูด</legend>
+            <input type="number" step="any" class="input w-full" [(ngModel)]="form.longitude" name="lng" [disabled]="!!existingCustomer()" />
+          </fieldset>
+        </div>
+
+        <div class="divider my-1"></div>
+
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend font-bold text-accent">จำนวนกล่อง (1-3 กล่อง)</legend>
+          <input type="range" min="1" max="3" [(ngModel)]="form.box_count" name="box_count" class="range range-accent" step="1" />
+          <div class="w-full flex justify-between text-xs px-2 mt-1">
+            <span>1 กล่อง</span>
+            <span>2 กล่อง</span>
+            <span>3 กล่อง</span>
+          </div>
+        </fieldset>
+
+        <fieldset class="fieldset mt-2">
+          <legend class="fieldset-legend">หมายเหตุ (เช่น ฝากไว้ที่ป้อมยาม)</legend>
+          <input type="text" class="input w-full" [(ngModel)]="form.delivery_note" name="note" />
+        </fieldset>
+
+        @if(formError()) {
+          <div class="text-error text-sm mt-2 font-medium">{{ formError() }}</div>
+        }
+
+        <div class="flex gap-2 mt-4 pt-2">
+          <button type="button" class="btn btn-ghost flex-1" (click)="resetForm()">ล้างฟอร์ม</button>
+          <button type="submit" class="btn btn-primary flex-1" [disabled]="saving() || !form.phone">
+            @if(saving()) { <span class="loading loading-spinner"></span> }
+            บันทึกออเดอร์
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ฝั่งขวา: ตารางออเดอร์ -->
+    <div class="lg:col-span-2 space-y-4">
+      <div class="panel p-4 flex flex-wrap justify-between items-center gap-3">
+        <h2 class="font-display text-xl">รายการออเดอร์ ({{ orders().length }})</h2>
+        <div class="join">
+          <input type="number" class="input input-sm join-item w-24 text-center" [(ngModel)]="nearbyRadius" placeholder="กม." title="ระยะทาง (กม.)">
+          <button class="btn btn-sm btn-outline join-item" (click)="loadNearby()">ค้นหาใกล้ร้าน</button>
+          <button class="btn btn-sm btn-ghost join-item" (click)="loadOrders()" [class.btn-active]="!nearbyMode()">ดูทั้งหมด</button>
+        </div>
+      </div>
+
+      @if(error()) {
+        <div class="alert alert-error">{{ error() }}</div>
+      }
+
+      <div class="panel overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="table table-zebra w-full">
+            <thead class="bg-base-200">
+              <tr>
+                <th>รหัส</th>
+                <th>ลูกค้า</th>
+                <th>เบอร์ติดต่อ</th>
+                <th class="text-center">จำนวน</th>
+                @if (nearbyMode()) { <th class="text-right">ระยะทาง (กม.)</th> }
+                <th>หมายเหตุ</th>
+                <th class="text-center">สถานะ</th>
+                <th class="text-right">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (o of orders(); track o.order_id) {
+                <tr>
+                  <td class="text-base-content/60 whitespace-nowrap">{{ o.order_id }}</td>
+                  <td class="font-medium whitespace-nowrap">{{ o.first_name }} {{ o.last_name }}</td>
+                  <td class="whitespace-nowrap">{{ o.phone }}</td>
+                  <td class="text-center font-bold text-accent whitespace-nowrap">{{ o.box_count }} กล่อง</td>
+                  
+                  @if (nearbyMode()) { 
+                    <td class="text-right tabular-nums whitespace-nowrap">{{ o.distance_km | number:'1.1-2' }}</td> 
+                  }
+                  
+                  <td class="text-xs text-base-content/70 max-w-40 truncate" [title]="o.delivery_note">{{ o.delivery_note || '-' }}</td>
+                  
+                  <td class="text-center whitespace-nowrap">
+                    @if (o.order_status === 'pending') { <span class="badge badge-warning badge-sm">รอจัดเส้นทาง</span> }
+                    @else if (o.order_status === 'assigned') { <span class="badge badge-info badge-sm">จัดเส้นทางแล้ว</span> }
+                    @else { <span class="badge badge-success badge-sm">ส่งแล้ว</span> }
+                  </td>
+                  
+                  <td class="text-right whitespace-nowrap">
+                    @if(o.order_status === 'pending') {
+                      <button class="btn btn-xs btn-error btn-ghost" (click)="deleteOrder(o.order_id)">ลบ</button>
+                    } @else {
+                      <span class="text-xs text-base-content/40 cursor-not-allowed">ล็อก</span>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td [attr.colspan]="nearbyMode() ? 8 : 7" class="text-center py-10 text-base-content/60">
+                    @if(loading()) { <span class="loading loading-spinner"></span> }
+                    @else { ยังไม่มีรายการออเดอร์ }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

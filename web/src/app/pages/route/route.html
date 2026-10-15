@@ -1,0 +1,453 @@
+<div class="space-y-6">
+  <!-- หัวข้อหน้า -->
+  <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="font-display text-3xl text-neutral-content">แดชบอร์ดแผนที่ & จัดเส้นทาง</h1>
+      <p class="text-sm text-neutral-content/70 mt-1">
+        คำนวณเส้นทางกระจายอาหารมื้อเที่ยงอัตโนมัติ ติดตามไรเดอร์ และคำนวณค่าปรับ
+      </p>
+    </div>
+  </div>
+
+  <!-- แถบควบคุม: ปุ่มจัดเส้นทาง + เลือกดูแผนเก่า + ลบแผน -->
+  <div class="panel p-4 shadow-sm">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <!-- ฝั่งซ้าย: จัดเส้นทางใหม่ -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2">
+          <label for="planDate" class="text-xs font-semibold text-base-content/80 whitespace-nowrap">วันที่แผน:</label>
+          <input
+            id="planDate"
+            type="date"
+            class="input input-sm input-bordered"
+            [(ngModel)]="planDate"
+          />
+        </div>
+        <button
+          type="button"
+          class="btn btn-sm btn-accent gap-2 font-medium"
+          [disabled]="planning()"
+          (click)="planRoutes()"
+        >
+          @if (planning()) {
+            <span class="loading loading-spinner loading-xs"></span>
+            กำลังจัดเส้นทาง...
+          } @else {
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A2 2 0 013 15.487V5a2 2 0 011.085-1.782l5.447-2.724a2 2 0 011.936 0l5.447 2.724A2 2 0 0118 5v10.487a2 2 0 01-1.085 1.782L11.468 20a2 2 0 01-1.936 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 2v18" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 4v16" />
+            </svg>
+            จัดเส้นทาง (POST /routes/plan)
+          }
+        </button>
+      </div>
+
+      <!-- ฝั่งขวา: เลือกดูแผนเก่า + ลบแผน -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2">
+          <label for="planSelect" class="text-xs font-semibold text-base-content/80 whitespace-nowrap">เลือกแผน:</label>
+          <select
+            id="planSelect"
+            class="select select-sm select-bordered max-w-xs"
+            [ngModel]="selectedPlanId()"
+            (ngModelChange)="selectPlan($event)"
+            [disabled]="loading()"
+          >
+            @if (plans().length === 0) {
+              <option [ngValue]="null">-- ไม่พบแผนเส้นทาง --</option>
+            }
+            @for (p of plans(); track p.plan_id) {
+              <option [ngValue]="p.plan_id">
+                แผน #{{ p.plan_id }} ({{ p.plan_date }}) - {{ p.total_distance_km | number:'1.1-1' }} กม.
+              </option>
+            }
+          </select>
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost btn-square"
+          title="โหลดข้อมูลแผนใหม่"
+          (click)="loadPlans()"
+          [disabled]="loading()"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-sm btn-outline btn-error gap-1"
+          [disabled]="!selectedPlanId() || deleting()"
+          (click)="openDeleteModal()"
+          title="ลบแผนที่กำลังดูอยู่"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          ลบแผน
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ข้อความแจ้งเตือนสถานะ -->
+  @if (successMessage()) {
+    <div class="alert alert-success shadow-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span>{{ successMessage() }}</span>
+      <button type="button" class="btn btn-ghost btn-xs ml-auto" (click)="successMessage.set('')">ปิด</button>
+    </div>
+  }
+
+  @if (error()) {
+    <div class="alert alert-error shadow-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 stroke-current" fill="none" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span>{{ error() }}</span>
+      <button type="button" class="btn btn-ghost btn-xs ml-auto" (click)="error.set('')">ปิด</button>
+    </div>
+  }
+
+  <!-- ข้อมูลสรุปภาพรวมแผน (Cards) -->
+  @if (currentPlan(); as plan) {
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">ไรเดอร์ / กล่องรวม</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-primary mt-1">
+          {{ plan.jobs.length }} คน / {{ plan.total_boxes }} กล่อง
+        </div>
+      </div>
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">ระยะทางรวม</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
+          {{ plan.total_distance_km | number:'1.2-2' }} <span class="text-sm font-normal">กม.</span>
+        </div>
+      </div>
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">ค่าน้ำมันรวม</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
+          {{ plan.total_fuel_cost | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
+        </div>
+      </div>
+      <div class="panel p-3 text-center" [class.border-secondary]="plan.total_late_stops > 0">
+        <div class="text-xs text-base-content/70">จุดที่เลท / ค่าปรับรวม</div>
+        <div class="font-display text-xl sm:text-2xl font-bold mt-1" [class.text-secondary]="plan.total_late_stops > 0" [class.text-success]="plan.total_late_stops === 0">
+          {{ plan.total_late_stops }} จุด / {{ plan.total_penalty_baht | number:'1.0-0' }} บาท
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ส่วนแสดงแผนที่ขนาดใหญ่ (Map Section) -->
+  <div class="panel p-4 space-y-3">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <h2 class="font-display text-lg font-semibold text-primary">แผนที่ขนาดใหญ่ & เส้นทางแยกสีไรเดอร์</h2>
+        @if (currentPlan(); as plan) {
+          <span class="badge badge-sm badge-outline">
+            แผน #{{ plan.plan_id }} ({{ plan.plan_date }})
+          </span>
+        }
+      </div>
+
+      <!-- แถบเลือกกรองไรเดอร์บนแผนที่ -->
+      @if (currentPlan(); as plan) {
+        <div class="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            class="btn btn-xs"
+            [class.btn-primary]="selectedRiderIndex() === null"
+            [class.btn-ghost]="selectedRiderIndex() !== null"
+            (click)="showAllRiders()"
+          >
+            ไรเดอร์ทั้งหมด
+          </button>
+          @for (job of plan.jobs; let i = $index; track job.access_code) {
+            <button
+              type="button"
+              class="btn btn-xs gap-1.5"
+              [class.btn-active]="selectedRiderIndex() === i"
+              [style.borderColor]="job.route_color"
+              (click)="toggleRiderFilter(i)"
+              [title]="'คลิกเพื่อดูเฉพาะเส้นทางของ ' + job.rider_name"
+            >
+              <span class="inline-block w-2.5 h-2.5 rounded-full" [style.backgroundColor]="job.route_color"></span>
+              {{ job.rider_name }}
+            </button>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- แผนที่ Leaflet -->
+    <div class="relative w-full rounded-lg border border-base-300 overflow-hidden" style="height: 520px;">
+      <div #mapContainer class="w-full h-full z-0"></div>
+
+      <!-- สัญลักษณ์คำอธิบายแผนที่ (Legend Overlay) -->
+      <div class="absolute bottom-3 left-3 z-[1000] bg-base-100/90 backdrop-blur-xs p-2.5 rounded-md border border-base-300 shadow-md text-xs space-y-1.5">
+        <div class="font-semibold text-base-content/90 border-b border-base-200 pb-1">คำอธิบายแผนที่</div>
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="20" viewBox="0 0 34 44" class="shrink-0">
+            <path d="M17 43 C17 43 32 27 32 16 C32 7.7 25.3 1 17 1 C8.7 1 2 7.7 2 16 C2 27 17 43 17 43 Z" fill="#1f4d3c" stroke="#e8a92b" stroke-width="2.5" />
+            <circle cx="17" cy="16" r="10.5" fill="#ebddbf" />
+          </svg>
+          <span>ร้านส่งด่วนมื้อเที่ยง (จุดเริ่มต้น)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="20" viewBox="0 0 34 44" class="shrink-0">
+            <path d="M17 43 C17 43 32 27 32 16 C32 7.7 25.3 1 17 1 C8.7 1 2 7.7 2 16 C2 27 17 43 17 43 Z" fill="#1f4d3c" stroke="#ffffff" stroke-width="2.5" />
+            <circle cx="17" cy="16" r="10.5" fill="#ffffff" />
+            <text x="17" y="21" font-size="13" font-weight="bold" fill="#1f4d3c" text-anchor="middle">1</text>
+          </svg>
+          <span>หมุดพร้อมลำดับส่ง (แยกสีตามไรเดอร์)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="badge badge-xs badge-error">เลท</span>
+          <span>จุดส่งที่เลยกำหนด (ปรับ 20 บ./จุด)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ตารางสรุปต่อไรเดอร์ -->
+  @if (currentPlan(); as plan) {
+    <div class="panel p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="font-display text-lg font-semibold text-primary">ตารางสรุปผลต่อไรเดอร์</h2>
+        <span class="text-xs text-base-content/70">
+          * ค่าปรับ 20 บาท ต่อจุดส่งที่เลทตามกติกา
+        </span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="table table-slip w-full text-sm">
+          <thead>
+            <tr>
+              <th class="w-12">#</th>
+              <th>ไรเดอร์</th>
+              <th>รหัสงาน</th>
+              <th class="text-right">กล่อง</th>
+              <th class="text-right">ระยะทาง (กม.)</th>
+              <th class="text-right">ค่าน้ำมัน (บาท)</th>
+              <th class="text-center">จุดส่งทั้งหมด</th>
+              <th class="text-center">จุดที่เลท</th>
+              <th class="text-right">ค่าปรับรวม (บาท)</th>
+              <th class="text-center">แผนที่ / รายละเอียด</th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (plan.jobs.length === 0) {
+              <tr>
+                <td colspan="10" class="text-center py-6 text-base-content/60">
+                  ไม่มีข้อมูลไรเดอร์ในแผนนี้
+                </td>
+              </tr>
+            }
+            @for (job of plan.jobs; let i = $index; track job.access_code) {
+              <tr [class.bg-base-200]="selectedRiderIndex() === i">
+                <td>{{ i + 1 }}</td>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs" [style.backgroundColor]="job.route_color"></span>
+                    <span class="font-medium">{{ job.rider_name }}</span>
+                  </div>
+                </td>
+                <td>
+                  <span class="font-mono text-xs px-2 py-0.5 rounded bg-base-200 border border-base-300">
+                    {{ job.access_code }}
+                  </span>
+                </td>
+                <td class="text-right font-medium">{{ job.total_boxes }}</td>
+                <td class="text-right font-mono">{{ job.distance_km | number:'1.2-2' }}</td>
+                <td class="text-right font-mono">{{ job.fuel_cost | number:'1.2-2' }}</td>
+                <td class="text-center font-medium">{{ job.stops.length }}</td>
+                <td class="text-center">
+                  @if (job.late_stops_count > 0) {
+                    <span class="badge badge-sm badge-error font-semibold">
+                      {{ job.late_stops_count }} จุด
+                    </span>
+                  } @else {
+                    <span class="badge badge-sm badge-success font-normal">
+                      0
+                    </span>
+                  }
+                </td>
+                <td class="text-right font-mono font-medium" [class.text-secondary]="job.penalty_baht > 0">
+                  {{ job.penalty_baht | number:'1.0-0' }}
+                </td>
+                <td class="text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      class="btn btn-xs btn-ghost gap-1"
+                      (click)="toggleRiderFilter(i)"
+                      [title]="selectedRiderIndex() === i ? 'แสดงทั้งหมด' : 'ซูมดูเฉพาะไรเดอร์นี้บนแผนที่'"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      {{ selectedRiderIndex() === i ? 'ดูทั้งหมด' : 'โฟกัส' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-xs btn-ghost gap-1"
+                      (click)="toggleExpandRider(i)"
+                      [title]="expandedRiderIndex() === i ? 'ซ่อนจุดส่ง' : 'แสดงจุดส่งย่อย'"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 transition-transform" [class.rotate-180]="expandedRiderIndex() === i" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                      </svg>
+                      {{ expandedRiderIndex() === i ? 'ซ่อน' : 'จุดส่ง (' + job.stops.length + ')' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- ตารางย่อยแสดงจุดส่งของไรเดอร์ (Collapsible Stops Detail) -->
+              @if (expandedRiderIndex() === i) {
+                <tr>
+                  <td colspan="10" class="p-0 bg-base-200/50">
+                    <div class="p-3 pl-8 border-y border-dashed border-base-300">
+                      <div class="text-xs font-semibold text-primary mb-2 flex items-center gap-2">
+                        <span>ลำดับจุดส่งของ {{ job.rider_name }} ({{ job.stops.length }} จุด):</span>
+                      </div>
+                      @if (job.stops.length === 0) {
+                        <p class="text-xs text-base-content/60 py-2">ไม่มีรายการจุดส่งในฐานข้อมูล</p>
+                      } @else {
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                          @for (st of job.stops; track st.stop_sequence) {
+                            <div class="p-2.5 rounded bg-base-100 border border-base-300 text-xs space-y-1 shadow-2xs">
+                              <div class="flex items-center justify-between">
+                                <span class="font-bold flex items-center gap-1.5" [style.color]="job.route_color">
+                                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white text-[11px] font-bold" [style.backgroundColor]="job.route_color">
+                                    {{ st.stop_sequence }}
+                                  </span>
+                                  ออเดอร์ #{{ st.order_id }}
+                                </span>
+                                @if (st.is_late) {
+                                  <span class="badge badge-xs badge-error">เลท (+20บ.)</span>
+                                } @else {
+                                  <span class="badge badge-xs badge-success">ตรงเวลา</span>
+                                }
+                              </div>
+                              @if (st.customer_name) {
+                                <div><strong>ลูกค้า:</strong> {{ st.customer_name }}</div>
+                              }
+                              @if (st.phone) {
+                                <div><strong>โทร:</strong> {{ st.phone }}</div>
+                              }
+                              @if (st.address) {
+                                <div class="truncate" [title]="st.address"><strong>ที่อยู่:</strong> {{ st.address }}</div>
+                              }
+                              <div><strong>เวลาส่งถึง:</strong> {{ st.arrival_time || '-' }}</div>
+                              @if (st.google_maps_url) {
+                                <div class="pt-1">
+                                  <a [href]="st.google_maps_url" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline font-semibold inline-flex items-center gap-1">
+                                    <span>เปิดแผนที่</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                  </a>
+                                </div>
+                              }
+                            </div>
+                          }
+                        </div>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+          <!-- แถวรวมสรุปท้ายตาราง -->
+          <tfoot>
+            <tr class="font-bold border-t-2 border-base-content/30 text-base-content">
+              <td colspan="3">รวมทั้งหมด ({{ plan.jobs.length }} ไรเดอร์)</td>
+              <td class="text-right">{{ plan.total_boxes }}</td>
+              <td class="text-right font-mono">{{ plan.total_distance_km | number:'1.2-2' }}</td>
+              <td class="text-right font-mono">{{ plan.total_fuel_cost | number:'1.2-2' }}</td>
+              <td class="text-center">{{ plan.total_stops }}</td>
+              <td class="text-center" [class.text-secondary]="plan.total_late_stops > 0">
+                {{ plan.total_late_stops }} จุด
+              </td>
+              <td class="text-right font-mono" [class.text-secondary]="plan.total_penalty_baht > 0">
+                {{ plan.total_penalty_baht | number:'1.0-0' }}
+              </td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  } @else {
+    <div class="panel panel-dashed p-12 text-center text-base-content/60">
+      <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-12 w-12 opacity-40 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A2 2 0 013 15.487V5a2 2 0 011.085-1.782l5.447-2.724a2 2 0 011.936 0l5.447 2.724A2 2 0 0118 5v10.487a2 2 0 01-1.085 1.782L11.468 20a2 2 0 01-1.936 0z" />
+      </svg>
+      <p class="font-medium text-base">ยังไม่ได้เลือกแผน หรือยังไม่มีแผนการจัดส่ง</p>
+      <p class="text-sm mt-1">กดปุ่ม <strong>"จัดเส้นทาง"</strong> ด้านบน หรือเลือกแผนจากรายการเดิม</p>
+    </div>
+  }
+
+  <!-- Modal ยืนยันการลบแผนเส้นทาง -->
+  <dialog #deleteModal class="modal">
+    <div class="modal-box panel border border-secondary/40 shadow-xl max-w-md">
+      <h3 class="font-display font-bold text-lg text-secondary flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        ยืนยันการลบแผนเส้นทาง
+      </h3>
+
+      @if (planToDelete(); as p) {
+        <div class="py-4 space-y-2 text-sm text-base-content">
+          <p>
+            คุณต้องการลบ <strong>แผน #{{ p.plan_id }}</strong> (วันที่ {{ p.plan_date }}) ใช่หรือไม่?
+          </p>
+          <div class="p-3 bg-base-200/60 rounded text-xs text-base-content/80 border border-base-300 space-y-1">
+            <div>• ระยะทางรวม: <strong>{{ p.total_distance_km | number:'1.1-2' }} กม.</strong></div>
+            <div>• ค่าน้ำมันรวม: <strong>{{ p.total_fuel_cost | number:'1.1-2' }} บาท</strong></div>
+            <div class="text-secondary font-medium pt-1">
+               คำเตือน: ออเดอร์ในแผนนี้จะถูกยกเลิกการจัดสรร และกลับสู่สถานะรอจัดส่ง (pending)
+            </div>
+          </div>
+        </div>
+      }
+
+      <div class="modal-action flex justify-end gap-2">
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost"
+          [disabled]="deleting()"
+          (click)="closeDeleteModal()"
+        >
+          ยกเลิก
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-error gap-1"
+          [disabled]="deleting()"
+          (click)="confirmDelete()"
+        >
+          @if (deleting()) {
+            <span class="loading loading-spinner loading-xs"></span>
+            กำลังลบ...
+          } @else {
+            ยืนยันการลบ
+          }
+        </button>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+      <button type="button" (click)="closeDeleteModal()">close</button>
+    </form>
+  </dialog>
+</div>

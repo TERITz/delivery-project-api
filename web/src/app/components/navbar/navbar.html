@@ -1,0 +1,51 @@
+<header class="sticky top-0 z-30 border-b border-dashed border-neutral-content/30 bg-ground-deep text-neutral-content">
+  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
+    <!-- ตราร้าน: ปิ่นโต 3 ชั้น -->
+    <a routerLink="/" (click)="closeMenu()" class="flex items-center gap-3 rounded-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent">
+      <svg viewBox="0 0 32 32" class="h-9 w-9 shrink-0" aria-hidden="true">
+        <path d="M11 7C11 2 21 2 21 7" fill="none" stroke-width="2" stroke-linecap="round" class="stroke-neutral-content" />
+        <rect x="9" y="6.5" width="14" height="3.5" rx="1.5" class="fill-neutral-content" />
+        <rect x="6.5" y="11" width="19" height="5.5" rx="2" class="fill-accent" />
+        <rect x="6.5" y="17.5" width="19" height="5.5" rx="2" class="fill-accent" />
+        <rect x="9" y="24" width="14" height="3.5" rx="1.5" class="fill-neutral-content" />
+      </svg>
+      <span class="font-display text-xl leading-none">ส่งด่วนมื้อเที่ยง</span>
+    </a>
+
+    <!-- เมนูจอใหญ่ -->
+    <nav class="hidden items-center gap-1 md:flex" aria-label="เมนูหลัก">
+      @for (link of links; track link.path) {
+        <a [routerLink]="link.path" routerLinkActive="nav-active" class="nav-link">{{ link.label }}</a>
+      }
+    </nav>
+
+    <!-- ปุ่มเมนูมือถือ -->
+    <button
+      type="button"
+      class="btn btn-ghost btn-square md:hidden"
+      [attr.aria-expanded]="menuOpen()"
+      aria-controls="mobile-menu"
+      aria-label="เปิดหรือปิดเมนู"
+      (click)="toggleMenu()"
+    >
+      @if (menuOpen()) {
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      } @else {
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      }
+    </button>
+  </div>
+
+  <!-- เมนูมือถือ -->
+  @if (menuOpen()) {
+    <nav id="mobile-menu" class="flex flex-col gap-1 border-t border-dashed border-neutral-content/30 px-4 py-3 md:hidden" aria-label="เมนูหลัก">
+      @for (link of links; track link.path) {
+        <a [routerLink]="link.path" routerLinkActive="nav-active" class="nav-link" (click)="closeMenu()">{{ link.label }}</a>
+      }
+    </nav>
+  }
+</header>

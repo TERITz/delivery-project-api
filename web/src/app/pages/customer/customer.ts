@@ -1,0 +1,366 @@
+import { DecimalPipe } from '@angular/common';
+import { Component, ElementRef, OnDestroy, OnInit, computed, inject, signal, viewChild } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+
+import { SHOP } from '../../config/shop';
+import { Customer, CustomerPostRequest } from '../../model/customer';
+import { getApiError, getApiStatus } from '../../services/api/api-error';
+import { CustomerService } from '../../services/api/customer.service';
+
+// ลูกค้า 1 แถวในตาราง (distance_km มีเฉพาะผลจากการค้นตามระยะ)
+type CustomerRow = Customer & { distance_km?: number };
+
+// คำค้นที่ใช้อยู่ตอนนี้ (ไว้โหลดซ้ำหลังแก้/ลบ ให้ตารางตรงกับตัวกรองเดิม)
+type Query =
+  | { mode: 'all' }
+  | { mode: 'search'; name: string; phone: string }
+  | { mode: 'nearby'; lat: number; lng: number; radius: number };
+
+interface CustomerForm {
+  first_name: string;
+  last_name: string;
+  phone: string;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+@Component({
+  selector: 'app-customer',
+  imports: [FormsModule, DecimalPipe],
+  templateUrl: './customer.html',
+})
+export class CustomerPage implements OnInit, OnDestroy {
+  private customerService = inject(CustomerService);
+
+  // ---------- ข้อมูลในตาราง ----------
+  customers = signal<CustomerRow[]>([]);
+  loading = signal(false);
+  error = signal('');
+  activeQuery = signal<Query>({ mode: 'all' });
+  private requestId = 0; // กันผลของคำขอเก่าที่ตอบกลับช้ากว่ามาทับคำขอใหม่
+
+  // ---------- แบ่งหน้า ----------
+  pageSize = signal(10);
+  page = signal(1);
+  totalPages = computed(() => Math.max(1, Math.ceil(this.customers().length / this.pageSize())));
+  currentPage = computed(() => Math.min(this.page(), this.totalPages()));
+  pagedCustomers = computed(() => {
+    const start = (this.currentPage() - 1) * this.pageSize();
+    return this.customers().slice(start, start + this.pageSize());
+  });
+
+  // ---------- ตัวกรอง ----------
+  filterTab = signal<'search' | 'nearby'>('search');
+  searchName = '';
+  searchPhone = '';
+  nearbyLat: number | null = SHOP.latitude;
+  nearbyLng: number | null = SHOP.longitude;
+  nearbyRadius: number | null = 1;
+
+  // ---------- ฟอร์มเพิ่ม/แก้ไข ----------
+  editingId = signal<number | null>(null); // null = กำลังเพิ่มใหม่
+  form: CustomerForm = this.emptyForm();
+  formError = signal('');
+  saving = signal(false);
+  private formDialog = viewChild.required<ElementRef<HTMLDialogElement>>('formDialog');
+
+  // ---------- ลบ ----------
+  deleteTarget = signal<Customer | null>(null);
+  deleting = signal(false);
+  deleteError = signal('');
+  private deleteDialog = viewChild.required<ElementRef<HTMLDialogElement>>('deleteDialog');
+
+  // ---------- จำลองลูกค้า ----------
+  simulateCount: number | null = 30;
+  simulating = signal(false);
+
+  // ---------- แจ้งเตือนมุมจอ ----------
+  toast = signal<{ type: 'success' | 'error'; text: string } | null>(null);
+  private toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+  ngOnInit(): void {
+    this.loadAll();
+  }
+
+  ngOnDestroy(): void {
+    clearTimeout(this.toastTimer);
+  }
+
+  // =====================================================
+  // โหลดข้อมูล
+  // =====================================================
+  private async load(query: Query, resetPage: boolean): Promise<void> {
+    const id = ++this.requestId;
+    this.loading.set(true);
+    this.error.set('');
+    try {
+      let rows: CustomerRow[];
+      if (query.mode === 'search') {
+        rows = await this.customerService.search({ name: query.name, phone: query.phone });
+      } else if (query.mode === 'nearby') {
+        rows = await this.customerService.nearby(query.lat, query.lng, query.radius);
+      } else {
+        rows = await this.customerService.getAll();
+      }
+      if (id !== this.requestId) return;
+      this.activeQuery.set(query);
+      this.customers.set(rows);
+      if (resetPage) this.page.set(1);
+    } catch (err) {
+      if (id !== this.requestId) return;
+      this.customers.set([]);
+      this.error.set(getApiError(err));
+    } finally {
+      if (id === this.requestId) this.loading.set(false);
+    }
+  }
+
+  // โหลดตามตัวกรองเดิมซ้ำ (ใช้หลังแก้ไข/ลบ — คงหน้าที่ดูอยู่)
+  refresh(): Promise<void> {
+    return this.load(this.activeQuery(), false);
+  }
+
+  loadAll(): Promise<void> {
+    return this.load({ mode: 'all' }, true);
+  }
+
+  // ปุ่ม "ล้างตัวกรอง"
+  clearFilters(): Promise<void> {
+    this.searchName = '';
+    this.searchPhone = '';
+    this.nearbyLat = SHOP.latitude;
+    this.nearbyLng = SHOP.longitude;
+    this.nearbyRadius = 1;
+    return this.loadAll();
+  }
+
+  // =====================================================
+  // ค้นหาจากชื่อ / เบอร์
+  // =====================================================
+  search(): Promise<void> {
+    const name = this.searchName.trim();
+    const phone = this.searchPhone.trim();
+    if (!name && !phone) return this.loadAll();
+    return this.load({ mode: 'search', name, phone }, true);
+  }
+
+  // =====================================================
+  // ค้นลูกค้าในระยะ
+  // =====================================================
+  searchNearby(): Promise<void> | void {
+    const lat = this.nearbyLat;
+    const lng = this.nearbyLng;
+    const radius = this.nearbyRadius;
+    if (lat === null || lng === null || radius === null || !isFinite(lat) || !isFinite(lng) || !isFinite(radius)) {
+      this.showToast('error', 'กรอกละติจูด ลองจิจูด และระยะ (กม.) ให้ครบ');
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      this.showToast('error', 'พิกัดไม่ถูกต้อง (ละติจูด -90 ถึง 90, ลองจิจูด -180 ถึง 180)');
+      return;
+    }
+    if (radius <= 0) {
+      this.showToast('error', 'ระยะต้องมากกว่า 0 กิโลเมตร');
+      return;
+    }
+    return this.load({ mode: 'nearby', lat, lng, radius }, true);
+  }
+
+  useShopLocation(): void {
+    this.nearbyLat = SHOP.latitude;
+    this.nearbyLng = SHOP.longitude;
+  }
+
+  useMyLocation(): void {
+    if (!('geolocation' in navigator)) {
+      this.showToast('error', 'เบราว์เซอร์นี้ไม่รองรับการหาตำแหน่ง');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.nearbyLat = Number(pos.coords.latitude.toFixed(6));
+        this.nearbyLng = Number(pos.coords.longitude.toFixed(6));
+      },
+      () => this.showToast('error', 'ดึงตำแหน่งของคุณไม่ได้ (ตรวจสอบสิทธิ์การเข้าถึงตำแหน่ง)'),
+    );
+  }
+
+  // =====================================================
+  // เพิ่ม / แก้ไข
+  // =====================================================
+  private emptyForm(): CustomerForm {
+    return {
+      first_name: '',
+      last_name: '',
+      phone: '',
+      address: '',
+      latitude: SHOP.latitude,
+      longitude: SHOP.longitude,
+    };
+  }
+
+  openAdd(): void {
+    this.editingId.set(null);
+    this.form = this.emptyForm();
+    this.formError.set('');
+    this.formDialog().nativeElement.showModal();
+  }
+
+  openEdit(c: Customer): void {
+    this.editingId.set(c.customer_id);
+    this.form = {
+      first_name: c.first_name,
+      last_name: c.last_name,
+      phone: c.phone,
+      address: c.address ?? '',
+      latitude: c.latitude,
+      longitude: c.longitude,
+    };
+    this.formError.set('');
+    this.formDialog().nativeElement.showModal();
+  }
+
+  closeForm(): void {
+    this.formDialog().nativeElement.close();
+  }
+
+  // คืนข้อความ error ถ้าฟอร์มไม่ถูกต้อง, null ถ้าผ่าน
+  private validateForm(): string | null {
+    const f = this.form;
+    if (!f.first_name.trim()) return 'กรอกชื่อ';
+    if (!f.last_name.trim()) return 'กรอกนามสกุล';
+    const phone = f.phone.replace(/[\s-]/g, '');
+    if (!/^\d{9,10}$/.test(phone)) return 'เบอร์โทรต้องเป็นตัวเลข 9-10 หลัก';
+    if (f.latitude === null || f.longitude === null || !isFinite(f.latitude) || !isFinite(f.longitude)) {
+      return 'กรอกละติจูดและลองจิจูด';
+    }
+    if (f.latitude < -90 || f.latitude > 90) return 'ละติจูดต้องอยู่ระหว่าง -90 ถึง 90';
+    if (f.longitude < -180 || f.longitude > 180) return 'ลองจิจูดต้องอยู่ระหว่าง -180 ถึง 180';
+    return null;
+  }
+
+  async save(): Promise<void> {
+    const invalid = this.validateForm();
+    if (invalid) {
+      this.formError.set(invalid);
+      return;
+    }
+
+    const f = this.form;
+    const address = f.address.trim();
+    const base = {
+      first_name: f.first_name.trim(),
+      last_name: f.last_name.trim(),
+      phone: f.phone.replace(/[\s-]/g, ''),
+      latitude: Number(f.latitude),
+      longitude: Number(f.longitude),
+    };
+
+    this.saving.set(true);
+    this.formError.set('');
+    try {
+      const id = this.editingId();
+      if (id === null) {
+        const body: CustomerPostRequest = { ...base, address: address || undefined };
+        await this.customerService.create(body);
+        this.closeForm();
+        this.showToast('success', 'เพิ่มลูกค้าเรียบร้อย');
+        // กลับไปดูรายการทั้งหมด จะได้เห็นลูกค้าที่เพิ่งเพิ่ม
+        this.searchName = '';
+        this.searchPhone = '';
+        await this.loadAll();
+      } else {
+        await this.customerService.update(id, { ...base, address: address || null });
+        this.closeForm();
+        this.showToast('success', 'แก้ไขข้อมูลลูกค้าเรียบร้อย');
+        await this.refresh();
+      }
+    } catch (err) {
+      this.formError.set(getApiStatus(err) === 409 ? 'เบอร์โทรนี้มีอยู่ในระบบแล้ว' : getApiError(err));
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  // =====================================================
+  // ลบ
+  // =====================================================
+  askDelete(c: Customer): void {
+    this.deleteTarget.set(c);
+    this.deleteError.set('');
+    this.deleteDialog().nativeElement.showModal();
+  }
+
+  closeDelete(): void {
+    this.deleteDialog().nativeElement.close();
+  }
+
+  async confirmDelete(): Promise<void> {
+    const target = this.deleteTarget();
+    if (!target) return;
+
+    this.deleting.set(true);
+    this.deleteError.set('');
+    try {
+      await this.customerService.delete(target.customer_id);
+      this.closeDelete();
+      this.showToast('success', `ลบลูกค้า ${target.first_name} ${target.last_name} แล้ว`);
+      await this.refresh();
+    } catch (err) {
+      this.deleteError.set(
+        getApiStatus(err) === 409
+          ? 'ลบไม่ได้ เพราะลูกค้ามีออเดอร์ที่ถูกจัดเข้าแผนเส้นทางแล้ว (ต้องลบแผนเส้นทางนั้นก่อน)'
+          : getApiError(err),
+      );
+    } finally {
+      this.deleting.set(false);
+    }
+  }
+
+  // =====================================================
+  // จำลองลูกค้า
+  // =====================================================
+  async simulate(): Promise<void> {
+    const count = this.simulateCount;
+    if (count === null || !Number.isInteger(count) || count < 1 || count > 200) {
+      this.showToast('error', 'จำนวนลูกค้าจำลองต้องเป็นจำนวนเต็ม 1-200');
+      return;
+    }
+
+    this.simulating.set(true);
+    try {
+      const res = await this.customerService.simulate(count);
+      const skipped = count - res.affected_row;
+      this.showToast(
+        'success',
+        `เพิ่มลูกค้าจำลอง ${res.affected_row} คน` + (skipped > 0 ? ` (ข้าม ${skipped} คนเพราะเบอร์ซ้ำ)` : ''),
+      );
+      this.searchName = '';
+      this.searchPhone = '';
+      await this.loadAll();
+    } catch (err) {
+      this.showToast('error', getApiError(err));
+    } finally {
+      this.simulating.set(false);
+    }
+  }
+
+  // =====================================================
+  // อื่น ๆ
+  // =====================================================
+  setPageSize(size: number): void {
+    this.pageSize.set(Number(size));
+    this.page.set(1);
+  }
+
+  mapUrl(c: Customer): string {
+    return `https://www.google.com/maps/search/?api=1&query=${c.latitude},${c.longitude}`;
+  }
+
+  showToast(type: 'success' | 'error', text: string): void {
+    clearTimeout(this.toastTimer);
+    this.toast.set({ type, text });
+    this.toastTimer = setTimeout(() => this.toast.set(null), 4000);
+  }
+}
