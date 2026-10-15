@@ -47,7 +47,6 @@ router.get("/nearby", async (req, res) => {
         ROUND(${DISTANCE_SQL}, 3) AS distance_km
       FROM orders o
       JOIN customer c ON o.customer_id = c.customer_id
-      WHERE o.order_status = 'pending'
       HAVING distance_km <= ?
       ORDER BY distance_km
     `;
