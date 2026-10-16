@@ -7,7 +7,7 @@ function required(name: string): string {
 }
 
 export const conn = createPool({
-  connectionLimit: 3, // บน Vercel ลดลง เพราะหลาย function รันพร้อมกันได้
+  connectionLimit: 3,
   host: required("DB_HOST"),
   port: Number(required("DB_PORT")),
   user: required("DB_USER"),

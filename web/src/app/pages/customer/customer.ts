@@ -63,6 +63,7 @@ export class CustomerPage implements OnInit, OnDestroy {
   form: CustomerForm = this.emptyForm();
   formError = signal('');
   saving = signal(false);
+  locating = signal(false);
   private formDialog = viewChild.required<ElementRef<HTMLDialogElement>>('formDialog');
 
   // ---------- ลบ ----------
@@ -219,6 +220,27 @@ export class CustomerPage implements OnInit, OnDestroy {
     };
     this.formError.set('');
     this.formDialog().nativeElement.showModal();
+  }
+
+  useCurrentLocationInForm(): void {
+    if (!('geolocation' in navigator)) {
+      this.formError.set('เบราว์เซอร์นี้ไม่รองรับการหาตำแหน่ง');
+      return;
+    }
+    this.locating.set(true);
+    this.formError.set('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.form.latitude = Number(pos.coords.latitude.toFixed(6));
+        this.form.longitude = Number(pos.coords.longitude.toFixed(6));
+        this.locating.set(false);
+      },
+      () => {
+        this.formError.set('ดึงตำแหน่งปัจจุบันไม่ได้ (ตรวจสอบว่าอนุญาตการเข้าถึงตำแหน่งแล้ว)');
+        this.locating.set(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
   }
 
   closeForm(): void {
