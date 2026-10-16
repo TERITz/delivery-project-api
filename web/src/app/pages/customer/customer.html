@@ -1,0 +1,282 @@
+<div class="space-y-5">
+  <!-- หัวเรื่อง + ปุ่มหลัก (อยู่บนพื้นเขียว จึงใช้ปุ่มสีขมิ้น) -->
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl text-neutral-content">ลูกค้า</h1>
+      <p class="mt-1 text-neutral-content/75">รายชื่อและพิกัดสำหรับจัดส่ง</p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="join">
+        <input
+          type="number"
+          class="input input-sm join-item w-20 text-center"
+          min="1"
+          max="200"
+          step="1"
+          [(ngModel)]="simulateCount"
+          name="simulateCount"
+          aria-label="จำนวนลูกค้าที่จะสร้าง"
+          title="จำนวนลูกค้าที่จะสร้าง (1-200)"
+        />
+        <button class="btn btn-sm btn-accent btn-outline join-item" (click)="simulate()" [disabled]="simulating()">
+          @if (simulating()) {
+            <span class="loading loading-spinner loading-xs"></span>
+          }
+          จำลองลูกค้า
+        </button>
+      </div>
+      <button class="btn btn-sm btn-accent" (click)="openAdd()">เพิ่มลูกค้า</button>
+    </div>
+  </div>
+
+  <!-- ตัวกรอง -->
+  <div class="panel p-4">
+    <div role="tablist" class="tabs tabs-border">
+      <button type="button" role="tab" class="tab" [class.tab-active]="filterTab() === 'search'" (click)="filterTab.set('search')">
+        ชื่อหรือเบอร์โทร
+      </button>
+      <button type="button" role="tab" class="tab" [class.tab-active]="filterTab() === 'nearby'" (click)="filterTab.set('nearby')">
+        ในระยะใกล้เคียง
+      </button>
+    </div>
+
+    @if (filterTab() === 'search') {
+      <form class="mt-3 flex flex-wrap items-end gap-3" (ngSubmit)="search()">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ชื่อหรือนามสกุล</legend>
+          <input type="text" class="input" placeholder="เช่น สมชาย" [(ngModel)]="searchName" name="searchName" />
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">เบอร์โทร</legend>
+          <input type="text" class="input" placeholder="เช่น 0812" [(ngModel)]="searchPhone" name="searchPhone" />
+        </fieldset>
+        <div class="flex gap-2 pb-1">
+          <button type="submit" class="btn btn-primary">ค้นหา</button>
+          <button type="button" class="btn btn-ghost" (click)="clearFilters()">ล้างตัวกรอง</button>
+        </div>
+      </form>
+    } @else {
+      <form class="mt-3 flex flex-wrap items-end gap-3" (ngSubmit)="searchNearby()">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ละติจูด</legend>
+          <input type="number" step="any" class="input w-36" [(ngModel)]="nearbyLat" name="nearbyLat" />
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ลองจิจูด</legend>
+          <input type="number" step="any" class="input w-36" [(ngModel)]="nearbyLng" name="nearbyLng" />
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ระยะ (กม.)</legend>
+          <input type="number" step="any" min="0" class="input w-28" [(ngModel)]="nearbyRadius" name="nearbyRadius" />
+        </fieldset>
+        <div class="flex flex-wrap gap-2 pb-1">
+          <button type="submit" class="btn btn-primary">ค้นหา</button>
+          <button type="button" class="btn btn-outline" (click)="useShopLocation()">ใช้พิกัดร้าน</button>
+          <button type="button" class="btn btn-outline" (click)="useMyLocation()">ใช้ตำแหน่งของฉัน</button>
+          <button type="button" class="btn btn-ghost" (click)="clearFilters()">ล้างตัวกรอง</button>
+        </div>
+      </form>
+    }
+  </div>
+
+  <!-- สรุปผล (อยู่บนพื้นเขียว) -->
+  <div class="flex flex-wrap items-center gap-3 text-neutral-content">
+    <p>
+      <span class="font-display text-2xl text-accent">{{ customers().length }}</span>
+      รายการ
+    </p>
+    @switch (activeQuery().mode) {
+      @case ('search') {
+        <span class="badge badge-accent">ผลการค้นหา</span>
+      }
+      @case ('nearby') {
+        <span class="badge badge-accent">ในระยะที่เลือก เรียงจากใกล้ไปไกล</span>
+      }
+    }
+    @if (loading()) {
+      <span class="loading loading-spinner loading-sm text-accent"></span>
+    }
+  </div>
+
+  @if (error()) {
+    <div role="alert" class="alert alert-error">
+      <span>{{ error() }}</span>
+      <button class="btn btn-sm" (click)="refresh()">ลองใหม่</button>
+    </div>
+  }
+
+  <!-- ตาราง -->
+  <div class="panel overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="table table-slip">
+        <thead>
+          <tr class="text-base-content">
+            <th class="font-medium">รหัส</th>
+            <th class="font-medium">ชื่อ-นามสกุล</th>
+            <th class="font-medium">เบอร์โทร</th>
+            <th class="font-medium">ที่อยู่</th>
+            <th class="font-medium">พิกัด</th>
+            @if (activeQuery().mode === 'nearby') {
+              <th class="text-right font-medium">ระยะ (กม.)</th>
+            }
+            <th class="text-right font-medium">จัดการ</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of pagedCustomers(); track c.customer_id) {
+            <tr>
+              <td class="tabular-nums text-base-content/60">{{ c.customer_id }}</td>
+              <td class="whitespace-nowrap font-medium">{{ c.first_name }} {{ c.last_name }}</td>
+              <td class="whitespace-nowrap tabular-nums">{{ c.phone }}</td>
+              <td class="min-w-48">{{ c.address || '-' }}</td>
+              <td class="whitespace-nowrap tabular-nums">
+                <a class="link link-primary" [href]="mapUrl(c)" target="_blank" rel="noopener" title="เปิดใน Google Maps">
+                  {{ c.latitude | number: '1.4-6' }}, {{ c.longitude | number: '1.4-6' }}
+                </a>
+              </td>
+              @if (activeQuery().mode === 'nearby') {
+                <td class="text-right font-semibold tabular-nums">{{ c.distance_km | number: '1.2-3' }}</td>
+              }
+              <td class="whitespace-nowrap text-right">
+                <button class="btn btn-xs btn-ghost" (click)="openEdit(c)">แก้ไข</button>
+                <button class="btn btn-xs btn-ghost text-error" (click)="askDelete(c)">ลบ</button>
+              </td>
+            </tr>
+          } @empty {
+            <tr class="hover:bg-transparent">
+              <td [attr.colspan]="activeQuery().mode === 'nearby' ? 7 : 6" class="py-10 text-center text-base-content/70">
+                @if (loading()) {
+                  กำลังโหลด
+                } @else if (activeQuery().mode === 'all') {
+                  ยังไม่มีลูกค้า กดเพิ่มลูกค้า หรือจำลองลูกค้าเพื่อทดสอบระบบ
+                } @else {
+                  ไม่พบลูกค้าที่ตรงกับเงื่อนไข ลองเปลี่ยนคำค้นหรือขยายระยะ
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <!-- แบ่งหน้า -->
+    @if (customers().length > 0) {
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-dashed border-base-content/35 p-4">
+        <label class="flex items-center gap-2 text-sm">
+          แสดงหน้าละ
+          <select class="select select-sm w-20" [ngModel]="pageSize()" (ngModelChange)="setPageSize($event)" name="pageSize">
+            <option [ngValue]="10">10</option>
+            <option [ngValue]="20">20</option>
+            <option [ngValue]="50">50</option>
+          </select>
+        </label>
+        <div class="join">
+          <button class="btn btn-sm join-item" [disabled]="currentPage() <= 1" (click)="page.set(currentPage() - 1)" aria-label="หน้าก่อนหน้า">ก่อนหน้า</button>
+          <span class="btn btn-sm join-item pointer-events-none tabular-nums">{{ currentPage() }} / {{ totalPages() }}</span>
+          <button class="btn btn-sm join-item" [disabled]="currentPage() >= totalPages()" (click)="page.set(currentPage() + 1)" aria-label="หน้าถัดไป">ถัดไป</button>
+        </div>
+      </div>
+    }
+  </div>
+</div>
+
+<!-- หน้าต่างเพิ่ม/แก้ไขลูกค้า -->
+<dialog #formDialog class="modal">
+  <div class="modal-box">
+    <h3 class="font-display text-xl">{{ editingId() === null ? 'เพิ่มลูกค้า' : 'แก้ไขลูกค้า รหัส ' + editingId() }}</h3>
+
+    <form class="mt-3 space-y-1" (ngSubmit)="save()">
+      <div class="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ชื่อ</legend>
+          <input type="text" class="input w-full" maxlength="100" [(ngModel)]="form.first_name" name="first_name" />
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">นามสกุล</legend>
+          <input type="text" class="input w-full" maxlength="100" [(ngModel)]="form.last_name" name="last_name" />
+        </fieldset>
+      </div>
+
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">เบอร์โทร</legend>
+        <input type="tel" class="input w-full" maxlength="20" placeholder="0812345678" [(ngModel)]="form.phone" name="phone" />
+        <p class="label text-base-content/70">ห้ามซ้ำกับลูกค้าคนอื่น</p>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">ที่อยู่ (ไม่บังคับ)</legend>
+        <input type="text" class="input w-full" maxlength="255" [(ngModel)]="form.address" name="address" />
+      </fieldset>
+
+      <div class="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ละติจูด</legend>
+          <input type="number" step="any" class="input w-full" [(ngModel)]="form.latitude" name="latitude" />
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">ลองจิจูด</legend>
+          <input type="number" step="any" class="input w-full" [(ngModel)]="form.longitude" name="longitude" />
+        </fieldset>
+      </div>
+
+      @if (formError()) {
+        <div role="alert" class="alert alert-error mt-2">
+          <span>{{ formError() }}</span>
+        </div>
+      }
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-ghost" (click)="closeForm()" [disabled]="saving()">ยกเลิก</button>
+        <button type="submit" class="btn btn-primary" [disabled]="saving()">
+          @if (saving()) {
+            <span class="loading loading-spinner loading-xs"></span>
+          }
+          บันทึก
+        </button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop" ngNoForm>
+    <button>ปิด</button>
+  </form>
+</dialog>
+
+<!-- หน้าต่างยืนยันการลบ -->
+<dialog #deleteDialog class="modal">
+  <div class="modal-box">
+    <h3 class="font-display text-xl">ลบลูกค้า</h3>
+    @if (deleteTarget(); as t) {
+      <p class="py-3">
+        ต้องการลบ <b>{{ t.first_name }} {{ t.last_name }}</b> ({{ t.phone }}) ใช่หรือไม่<br />
+        <span class="text-sm text-base-content/70">ออเดอร์ที่ยังรอจัดเส้นทางของลูกค้าคนนี้จะถูกลบไปด้วย</span>
+      </p>
+    }
+    @if (deleteError()) {
+      <div role="alert" class="alert alert-error">
+        <span>{{ deleteError() }}</span>
+      </div>
+    }
+    <div class="modal-action">
+      <button class="btn btn-ghost" (click)="closeDelete()" [disabled]="deleting()">ยกเลิก</button>
+      <button class="btn btn-error" (click)="confirmDelete()" [disabled]="deleting()">
+        @if (deleting()) {
+          <span class="loading loading-spinner loading-xs"></span>
+        }
+        ลบลูกค้า
+      </button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop" ngNoForm>
+    <button>ปิด</button>
+  </form>
+</dialog>
+
+<!-- แจ้งเตือน -->
+<div class="toast toast-top toast-end z-50">
+  @if (toast(); as t) {
+    <div role="status" class="alert" [class.alert-success]="t.type === 'success'" [class.alert-error]="t.type === 'error'">
+      <span>{{ t.text }}</span>
+    </div>
+  }
+</div>

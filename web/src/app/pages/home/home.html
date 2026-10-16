@@ -1,0 +1,18 @@
+<section class="pt-4">
+  <h1 class="font-display text-4xl leading-tight text-neutral-content sm:text-5xl">
+    ส่งถึงมือลูกค้า<br class="sm:hidden" />ก่อน {{ rules.deadline }} น.
+  </h1>
+  <p class="mt-4 max-w-xl text-lg leading-relaxed text-neutral-content/80">
+    อาหารเสร็จ {{ rules.cookDone }} น. ไรเดอร์หนึ่งคนขนได้ {{ rules.boxCapacity }} กล่อง
+    ออเดอร์ที่ส่งเลทถูกปรับออเดอร์ละ {{ rules.latePenaltyBaht }} บาท
+  </p>
+
+  <nav class="panel mt-8 max-w-3xl divide-y divide-dashed divide-base-content/30 overflow-hidden" aria-label="ทางลัด">
+    @for (m of menus; track m.path) {
+      <a [routerLink]="m.path" class="home-row flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-5 py-4">
+        <span class="home-row-title font-display text-xl">{{ m.title }}</span>
+        <span class="text-base-content/70">{{ m.desc }}</span>
+      </a>
+    }
+  </nav>
+</section>
