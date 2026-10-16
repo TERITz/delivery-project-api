@@ -173,20 +173,6 @@ export class CustomerPage implements OnInit, OnDestroy {
     this.nearbyLng = SHOP.longitude;
   }
 
-  useMyLocation(): void {
-    if (!('geolocation' in navigator)) {
-      this.showToast('error', 'เบราว์เซอร์นี้ไม่รองรับการหาตำแหน่ง');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        this.nearbyLat = Number(pos.coords.latitude.toFixed(6));
-        this.nearbyLng = Number(pos.coords.longitude.toFixed(6));
-      },
-      () => this.showToast('error', 'ดึงตำแหน่งของคุณไม่ได้ (ตรวจสอบสิทธิ์การเข้าถึงตำแหน่ง)'),
-    );
-  }
-
   // =====================================================
   // เพิ่ม / แก้ไข
   // =====================================================
