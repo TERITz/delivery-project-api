@@ -220,6 +220,13 @@
         </fieldset>
       </div>
 
+      <button type="button" class="btn btn-outline btn-sm" (click)="useCurrentLocationInForm()" [disabled]="locating()">
+        @if (locating()) {
+          <span class="loading loading-spinner loading-xs"></span>
+        }
+        ใช้ตำแหน่งปัจจุบัน
+      </button>
+
       @if (formError()) {
         <div role="alert" class="alert alert-error mt-2">
           <span>{{ formError() }}</span>
