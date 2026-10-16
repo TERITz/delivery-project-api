@@ -2,8 +2,8 @@
 // ใช้เป็นค่าเริ่มต้นของแผนที่/ช่องกรอกพิกัดในหน้าต่าง ๆ
 export const SHOP = {
   name: 'ส่งด่วนมื้อเที่ยง',
-  latitude: 16.1832,
-  longitude: 103.3,
+  latitude: 16.247,
+  longitude: 103.254,
 };
 
 // กติกาเดียวกับ backend (config/config.ts) — ถ้าฝั่ง backend แก้ ให้แก้ตรงนี้ตาม

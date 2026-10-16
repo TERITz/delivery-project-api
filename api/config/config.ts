@@ -3,8 +3,8 @@
 // พิกัดร้าน (ตัวอย่าง) — จุดเริ่มต้นและจุดกลับของไรเดอร์ทุกคน
 export const SHOP = {
   name: "ส่งด่วนมื้อเที่ยง",
-  latitude: 16.1832,
-  longitude: 103.3,
+  latitude: 16.247,
+  longitude: 103.254,
 };
 
 export const BOX_CAPACITY = 10; // ไรเดอร์ 1 คน ขนได้สูงสุด 10 กล่อง
