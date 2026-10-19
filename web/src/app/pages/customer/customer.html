@@ -105,6 +105,19 @@
     </div>
   }
 
+  <!-- แผนที่บ้านลูกค้า -->
+  <div class="panel p-3">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+      <h2 class="font-display text-lg">แผนที่บ้านลูกค้า</h2>
+      <div class="flex flex-wrap items-center gap-3 text-base-content/70">
+        <span><span class="inline-block h-3 w-3 rounded-full bg-red-600 align-middle"></span> ร้าน</span>
+        <span><span class="inline-block h-3 w-3 rounded-full bg-amber-500 align-middle"></span> บ้านลูกค้า</span>
+        <span>วงประ = รัศมี 3 กม.</span>
+      </div>
+    </div>
+    <div #mapEl class="isolate z-0 h-80 w-full overflow-hidden rounded-lg sm:h-96"></div>
+  </div>
+
   <!-- ตาราง -->
   <div class="panel overflow-hidden">
     <div class="overflow-x-auto">
@@ -138,6 +151,7 @@
                 <td class="text-right font-semibold tabular-nums">{{ c.distance_km | number: '1.2-3' }}</td>
               }
               <td class="whitespace-nowrap text-right">
+                <button class="btn btn-xs btn-ghost" (click)="focusOnMap(c)">ดูแผนที่</button>
                 <button class="btn btn-xs btn-ghost" (click)="openEdit(c)">แก้ไข</button>
                 <button class="btn btn-xs btn-ghost text-error" (click)="askDelete(c)">ลบ</button>
               </td>

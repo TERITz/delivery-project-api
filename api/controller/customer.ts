@@ -86,11 +86,14 @@ router.post("/simulate", async (req, res) => {
     const firstNames = ["สมชาย", "สมหญิง", "สมศักดิ์", "สมศรี", "วิชัย", "วิภา", "ประเสริฐ", "ประภา", "ธนากร", "ธนพร", "กิตติ", "กนกวรรณ", "อนุชา", "อรุณี", "ณัฐวุฒิ", "ณัฐธิดา", "พิชัย", "พิมพ์ใจ", "สุรชัย", "สุนิสา"];
     const lastNames = ["ใจดี", "รักเรียน", "มั่นคง", "สุขสันต์", "แก้วมณี", "ทองดี", "บุญมา", "ศรีสุข", "พงษ์พันธ์", "วงศ์ใหญ่"];
 
-    // สุ่มพิกัดรอบร้านในรัศมีประมาณ 6 กม.
+    // สุ่มพิกัดรอบร้าน (มมส.) ในรัศมี 3 กม. ตาม req (กระจายสม่ำเสมอในวงกลม)
+    const RADIUS_KM = 3;
     const rows: any[] = [];
     for (let i = 0; i < count; i++) {
-      const lat = SHOP.latitude + (Math.random() * 2 - 1) * 0.054;
-      const lng = SHOP.longitude + ((Math.random() * 2 - 1) * 0.054) / Math.cos((SHOP.latitude * Math.PI) / 180);
+      const r = RADIUS_KM * Math.sqrt(Math.random()); // sqrt ทำให้จุดไม่กระจุกตรงกลาง
+      const theta = Math.random() * 2 * Math.PI;
+      const lat = SHOP.latitude + (r * Math.sin(theta)) / 111.32; // 1 องศาละติจูด ≈ 111.32 กม.
+      const lng = SHOP.longitude + (r * Math.cos(theta)) / (111.32 * Math.cos((SHOP.latitude * Math.PI) / 180));
       const phone = "0" + randomInt(6, 9) + String(randomInt(0, 99999999)).padStart(8, "0");
       rows.push([
         firstNames[randomInt(0, firstNames.length - 1)],

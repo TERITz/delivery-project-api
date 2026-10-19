@@ -1,6 +1,7 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, ElementRef, OnDestroy, OnInit, computed, inject, signal, viewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import * as L from 'leaflet';
 
 import { SHOP } from '../../config/shop';
 import { Customer, CustomerPostRequest } from '../../model/customer';
@@ -30,8 +31,23 @@ interface CustomerForm {
   imports: [FormsModule, DecimalPipe],
   templateUrl: './customer.html',
 })
-export class CustomerPage implements OnInit, OnDestroy {
+export class CustomerPage implements OnInit, AfterViewInit, OnDestroy {
   private customerService = inject(CustomerService);
+
+  // ---------- แผนที่บ้านลูกค้า (Leaflet) ----------
+  private mapEl = viewChild<ElementRef<HTMLDivElement>>('mapEl');
+  private map: L.Map | null = null;
+  private markerLayer: L.LayerGroup | null = null;
+  private markers = new Map<number, L.CircleMarker>(); // customer_id -> หมุด
+  private mapReady = signal(false);
+
+  constructor() {
+    // วาดหมุดใหม่ทุกครั้งที่รายการลูกค้าเปลี่ยน (ค้นหา / เพิ่ม / ลบ / จำลอง)
+    effect(() => {
+      const rows = this.customers();
+      if (this.mapReady()) this.renderCustomerMarkers(rows);
+    });
+  }
 
   // ---------- ข้อมูลในตาราง ----------
   customers = signal<CustomerRow[]>([]);
@@ -84,8 +100,98 @@ export class CustomerPage implements OnInit, OnDestroy {
     this.loadAll();
   }
 
+  ngAfterViewInit(): void {
+    this.initMap();
+  }
+
   ngOnDestroy(): void {
     clearTimeout(this.toastTimer);
+    this.map?.remove();
+    this.map = null;
+  }
+
+  // =====================================================
+  // แผนที่บ้านลูกค้า
+  // =====================================================
+  private initMap(): void {
+    const el = this.mapEl()?.nativeElement;
+    if (!el || this.map) return;
+
+    this.map = L.map(el, { center: [SHOP.latitude, SHOP.longitude], zoom: 13, scrollWheelZoom: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(this.map);
+
+    // ร้าน + วงรัศมี 3 กม. (พื้นที่ให้บริการตามโจทย์)
+    L.circle([SHOP.latitude, SHOP.longitude], {
+      radius: 3000,
+      color: '#8a6d1d',
+      weight: 1,
+      dashArray: '6 6',
+      fillOpacity: 0.04,
+      interactive: false,
+    }).addTo(this.map);
+    L.circleMarker([SHOP.latitude, SHOP.longitude], {
+      radius: 10,
+      color: '#7f1d1d',
+      weight: 3,
+      fillColor: '#dc2626',
+      fillOpacity: 1,
+    })
+      .bindTooltip(this.escapeHtml(SHOP.name) + ' (ร้าน)', { permanent: false })
+      .addTo(this.map);
+
+    this.markerLayer = L.layerGroup().addTo(this.map);
+    this.mapReady.set(true);
+    setTimeout(() => this.map?.invalidateSize(), 250);
+  }
+
+  private renderCustomerMarkers(rows: CustomerRow[]): void {
+    if (!this.map || !this.markerLayer) return;
+    this.markerLayer.clearLayers();
+    this.markers.clear();
+
+    const points: L.LatLngExpression[] = [[SHOP.latitude, SHOP.longitude]];
+    for (const c of rows) {
+      const m = L.circleMarker([c.latitude, c.longitude], {
+        radius: 7,
+        color: '#1f4d3a',
+        weight: 2,
+        fillColor: '#e8a825',
+        fillOpacity: 0.95,
+      }).bindPopup(
+        `<b>${this.escapeHtml(c.first_name)} ${this.escapeHtml(c.last_name)}</b><br>` +
+          `โทร ${this.escapeHtml(c.phone)}<br>` +
+          `${this.escapeHtml(c.address || '-')}<br>` +
+          `<small>${c.latitude}, ${c.longitude}</small>`,
+      );
+      m.addTo(this.markerLayer);
+      this.markers.set(c.customer_id, m);
+      points.push([c.latitude, c.longitude]);
+    }
+
+    // ปรับมุมมองให้เห็นลูกค้าทุกคนที่แสดงอยู่ (ถ้าไม่มีลูกค้าให้กลับมาที่ร้าน)
+    if (rows.length > 0) {
+      this.map.fitBounds(L.latLngBounds(points), { padding: [30, 30], maxZoom: 15 });
+    } else {
+      this.map.setView([SHOP.latitude, SHOP.longitude], 13);
+    }
+  }
+
+  // ปุ่ม "ดูแผนที่" ในแถวตาราง: เลื่อนมาที่แผนที่แล้วซูมไปบ้านลูกค้าคนนั้น
+  focusOnMap(c: CustomerRow): void {
+    const marker = this.markers.get(c.customer_id);
+    if (!this.map || !marker) return;
+    this.mapEl()?.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    this.map.flyTo(marker.getLatLng(), 16);
+    marker.openPopup();
+  }
+
+  // กัน HTML แทรกจากข้อมูลที่ผู้ใช้กรอก (ชื่อ/ที่อยู่) ก่อนใส่ใน popup
+  private escapeHtml(s: string): string {
+    const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(s).replace(/[&<>"']/g, (ch) => map[ch]);
   }
 
   // =====================================================
