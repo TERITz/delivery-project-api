@@ -17,6 +17,7 @@ export const ROAD_FACTOR = 1.3; // ระยะทางถนนจริงย
 export const FUEL_BAHT_PER_KM = 1.5; // ค่าน้ำมันต่อกิโลเมตร
 export const LATE_PENALTY_BAHT = 20; // ค่าปรับต่อออเดอร์ที่ส่งเลท
 export const MAX_RIDERS = 12; // จำนวนไรเดอร์มากสุดที่ระบบจะลองใช้
+export const MAX_SIMULATE_ORDERS = 30;
 
 // สีเส้นทางของไรเดอร์แต่ละคน (คนที่ 1 แดง, 2 เขียว, 3 น้ำเงิน, ...)
 export const ROUTE_COLORS = [
