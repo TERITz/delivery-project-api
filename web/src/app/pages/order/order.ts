@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { DecimalPipe } from '@angular/common';
 
@@ -218,11 +218,11 @@ export class OrderPage implements OnInit {
   }
 
   async simulateOrders() {
-    const count = prompt('ต้องการจำลองกี่ออเดอร์? (1-200)', '10');
+    const count = prompt('ต้องการจำลองกี่ออเดอร์? (1-30)', '15');
     if (!count) return;
     const num = parseInt(count, 10);
-    if (isNaN(num) || num < 1 || num > 200) {
-      alert('กรุณากรอกตัวเลข 1-200');
+    if (isNaN(num) || num < 1 || num > 30) {
+      alert('กรุณากรอกตัวเลข 1-30');
       return;
     }
 
