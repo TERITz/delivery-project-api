@@ -2,7 +2,7 @@ import express from "express";
 import mysql from "mysql2";
 import { conn } from "../dbconnect";
 import { Order, OrderPostRequest, OrderWithCustomer } from "../model/order";
-import { SHOP, MAX_BOX_PER_ORDER } from "../config/config";
+import { SHOP, MAX_BOX_PER_ORDER, MAX_SIMULATE_ORDERS } from "../config/config";
 import { DISTANCE_SQL, randomInt, todayString } from "../utils/utils";
 
 export const router = express.Router();
@@ -61,15 +61,19 @@ router.get("/nearby", async (req, res) => {
 // ตัวอย่าง: POST /orders/simulate หรือส่ง body { "count": 25 }
 router.post("/simulate", async (req, res) => {
   try {
-    let count = randomInt(20, 30);
+    // สุ่มจำนวนออเดอร์ 20-30 รายการ หรือตามที่ Front-end ส่งมา (count)
+    let count = randomInt(20, MAX_SIMULATE_ORDERS);
     if (req.body && req.body.count !== undefined) {
       count = Number(req.body.count);
     }
-    if (!Number.isInteger(count) || count < 1 || count > 200) {
-      res.status(400).json({ error: "count must be an integer between 1 and 200" });
+
+    // ตรวจ count: ต้องเป็นจำนวนเต็ม และอยู่ระหว่าง 1 ถึง MAX_SIMULATE_ORDERS
+    if (!Number.isInteger(count) || count < 1 || count > MAX_SIMULATE_ORDERS) {
+      res.status(400).json({ error: `count must be an integer between 1 and ${MAX_SIMULATE_ORDERS}` });
       return;
     }
 
+    // ดึง ID ลูกค้าทั้งหมดในระบบมาเตรียมไว้เพื่อทำการสุ่ม
     const [custRows] = await conn.query("SELECT customer_id FROM customer");
     const customers = custRows as any[];
     if (customers.length === 0) {
@@ -77,29 +81,23 @@ router.post("/simulate", async (req, res) => {
       return;
     }
 
-    const mockNotes = [
-      "ฝากไว้ที่ป้อม รปภ.",
-      "โทรแจ้งล่วงหน้า 5 นาที",
-      "วางไว้โต๊ะหน้าบ้าน",
-      "ส่งก่อนเที่ยงตรงครับ",
-      "ตึก 1 ชั้น 2 ห้อง 204",
-      null,
-    ];
-
+    // หมายเหตุจำลอง
+    const mockNotes = ["ฝากไว้ที่ป้อม รปภ.", "โทรแจ้งล่วงหน้า 5 นาที", "วางไว้โต๊ะหน้าบ้าน", "ส่งก่อนเที่ยงตรงครับ", "ตึก 1 ชั้น 2 ห้อง 204", null];
     const today = todayString();
     const rows: any[] = [];
 
+    // วนลูปสร้างข้อมูลออเดอร์จำลองตามจำนวน count
     for (let i = 0; i < count; i++) {
-      const randomCust = customers[randomInt(0, customers.length - 1)].customer_id;
-      const randomBoxes = randomInt(1, MAX_BOX_PER_ORDER);
-      const randomNote = mockNotes[randomInt(0, mockNotes.length - 1)];
-      rows.push([randomCust, today, randomBoxes, "pending", randomNote]);
+      const randomCust = customers[randomInt(0, customers.length - 1)].customer_id; // สุ่มลูกค้า
+      const randomBoxes = randomInt(1, MAX_BOX_PER_ORDER); // สุ่มกล่อง 1-3
+      const randomNote = mockNotes[randomInt(0, mockNotes.length - 1)]; // สุ่มหมายเหตุ
+      rows.push([randomCust, today, randomBoxes, "pending", randomNote]); // เก็บลง Array
     }
 
+    // ใช้ Bulk Insert (เพิ่มข้อมูลทีละหลายๆ แถวพร้อมกัน) เพื่อความรวดเร็ว
     const sql = "INSERT INTO orders (customer_id, order_date, box_count, order_status, delivery_note) VALUES ?";
     const [result] = await conn.query(sql, [rows]);
-    const insertResult = result as any;
-    res.status(201).json({ affected_row: insertResult.affectedRows, count });
+    res.status(201).json({ affected_row: (result as any).affectedRows, count });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
   }
