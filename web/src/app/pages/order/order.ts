@@ -199,6 +199,30 @@ export class OrderPage implements OnInit {
     }
   }
 
+  async editOrder(order: OrderWithCustomer) {
+    const newCountStr = prompt(
+      `แก้ไขจำนวนกล่องของออเดอร์รหัส ${order.order_id}\n(คุณ ${order.first_name} ${order.last_name})\n\nระบุจำนวนกล่องใหม่ (1-3):`, 
+      order.box_count.toString()
+    );
+    
+    if (newCountStr === null) return; // กดยกเลิก
+    
+    const newCount = parseInt(newCountStr, 10);
+    if (isNaN(newCount) || newCount < 1 || newCount > 3) {
+      alert('กรุณาระบุจำนวนกล่องเป็นตัวเลข 1 ถึง 3 เท่านั้น');
+      return;
+    }
+
+    if (newCount === order.box_count) return; // ค่าเดิม ไม่ต้องอัปเดต
+
+    try {
+      await this.orderService.update(order.order_id, { box_count: newCount });
+      this.loadOrders();
+    } catch (err) {
+      alert(getApiError(err));
+    }
+  }
+
   async clearAllOrders() {
     if (!confirm('ระวัง! ยืนยันการลบ "ออเดอร์ทั้งหมด" ในระบบใช่หรือไม่?')) return;
     this.clearing.set(true);

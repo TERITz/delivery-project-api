@@ -159,6 +159,7 @@
                   
                   <td class="text-right whitespace-nowrap">
                     @if(o.order_status === 'pending') {
+                      <button class="btn btn-xs btn-warning btn-ghost mr-1" (click)="editOrder(o)">แก้ไข</button>
                       <button class="btn btn-xs btn-error btn-ghost" (click)="deleteOrder(o.order_id)">ลบ</button>
                     } @else {
                       <span class="text-xs text-base-content/40 cursor-not-allowed">ล็อก</span>
