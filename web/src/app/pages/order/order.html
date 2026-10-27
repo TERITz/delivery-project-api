@@ -7,7 +7,8 @@
     </div>
     
     <div class="flex flex-wrap gap-2">
-      <button class="btn btn-sm btn-accent btn-outline" (click)="simulateOrders()" [disabled]="simulating()">
+      <!-- ปิดปุ่มเมื่อกำลังทำงาน หรือ ออเดอร์เต็ม 30 แล้ว -->
+      <button class="btn btn-sm btn-accent btn-outline" (click)="simulateOrders()" [disabled]="simulating() || isOrderFull()">
         @if(simulating()) { <span class="loading loading-spinner loading-xs"></span> }
         จำลองออเดอร์
       </button>
@@ -89,9 +90,16 @@
           <div class="text-error text-sm mt-2 font-medium">{{ formError() }}</div>
         }
 
+        <!-- แจ้งเตือนเมื่อออเดอร์เต็ม -->
+        @if(isOrderFull()) {
+          <div class="alert alert-warning py-2 text-sm shadow-sm mt-3">
+            ⚠️ ระบบจำกัดออเดอร์สูงสุด 30 รายการ (กรุณาล้างออเดอร์ก่อนเพิ่มใหม่)
+          </div>
+        }
+
         <div class="flex gap-2 mt-4 pt-2">
           <button type="button" class="btn btn-ghost flex-1" (click)="resetForm()">ล้างฟอร์ม</button>
-          <button type="submit" class="btn btn-primary flex-1" [disabled]="saving() || !form.phone">
+          <button type="submit" class="btn btn-primary flex-1" [disabled]="saving() || !form.phone || isOrderFull()">
             @if(saving()) { <span class="loading loading-spinner"></span> }
             บันทึกออเดอร์
           </button>

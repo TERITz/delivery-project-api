@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { DecimalPipe } from '@angular/common';
 
@@ -22,6 +22,7 @@ export class OrderPage implements OnInit {
 
   // ---------- ข้อมูลตาราง ----------
   orders = signal<OrderWithCustomer[]>([]);
+  isOrderFull = computed(() => this.orders().length >= 30); // เช็คว่าถึง 30 ออเดอร์หรือยัง
   loading = signal(false);
   error = signal('');
   
@@ -80,7 +81,6 @@ export class OrderPage implements OnInit {
     this.loading.set(true);
     this.nearbyMode.set(true);
     try {
-      // ส่งพิกัดร้าน SHOP เข้าไปตรงๆ เลย
       const data = await this.orderService.nearby(SHOP.latitude, SHOP.longitude, this.nearbyRadius);
       this.orders.set(data);
     } catch (err) {
@@ -104,7 +104,6 @@ export class OrderPage implements OnInit {
     this.formError.set('');
     
     try {
-      // เรียกใช้ CustomerService จากคนที่ 1
       const results = await this.customerService.search({ phone });
       
       if (results.length > 0) {
@@ -134,7 +133,7 @@ export class OrderPage implements OnInit {
     this.formError.set('');
     this.form = {
       first_name: '', last_name: '', phone: '', address: '',
-      latitude: 16.245, longitude: 103.25, box_count: 1, delivery_note: ''
+      latitude: SHOP.latitude, longitude: SHOP.longitude, box_count: 1, delivery_note: ''
     };
   }
 
@@ -144,13 +143,11 @@ export class OrderPage implements OnInit {
   async submitOrder() {
     this.formError.set('');
     
-    // Validate กล่อง
     if (this.form.box_count < 1 || this.form.box_count > 3) {
       this.formError.set('จำนวนกล่องต้องอยู่ระหว่าง 1 ถึง 3 กล่องเท่านั้น');
       return;
     }
 
-    // Validate ข้อมูลลูกค้า
     if (!this.form.first_name || !this.form.last_name || !this.form.phone) {
       this.formError.set('กรุณากรอกชื่อ นามสกุล และเบอร์โทรลูกค้าให้ครบถ้วน');
       return;
@@ -160,7 +157,6 @@ export class OrderPage implements OnInit {
     try {
       let customerId = this.existingCustomer()?.customer_id;
 
-      // ถ้าเป็นลูกค้าใหม่ (ไม่มี customerId) ให้สร้างลูกค้าก่อน
       if (!customerId) {
         const newCustomerRes = await this.customerService.create({
           first_name: this.form.first_name,
@@ -173,7 +169,6 @@ export class OrderPage implements OnInit {
         customerId = newCustomerRes.last_id;
       }
 
-      // สร้างออเดอร์
       await this.orderService.create({
         customer_id: customerId,
         box_count: this.form.box_count,
