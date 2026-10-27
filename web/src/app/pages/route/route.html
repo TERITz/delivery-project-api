@@ -4,7 +4,7 @@
     <div>
       <h1 class="font-display text-3xl text-neutral-content">แดชบอร์ดแผนที่ & จัดเส้นทาง</h1>
       <p class="text-sm text-neutral-content/70 mt-1">
-        คำนวณเส้นทางกระจายอาหารมื้อเที่ยงอัตโนมัติ ติดตามไรเดอร์ และคำนวณค่าปรับ
+        คำนวณเส้นทางกระจายอาหารมื้อเที่ยงอัตโนมัติ ดูเวลาส่ง ต้นทุน และกำไร/ขาดทุน
       </p>
     </div>
   </div>
@@ -38,7 +38,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 2v18" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M15 4v16" />
             </svg>
-            จัดเส้นทาง (POST /routes/plan)
+            จัดเส้นทาง / คำนวณใหม่
           }
         </button>
       </div>
@@ -116,6 +116,7 @@
 
   <!-- ข้อมูลสรุปภาพรวมแผน (Cards) -->
   @if (currentPlan(); as plan) {
+    <!-- แถวที่ 1: ภาพรวมการจัดส่ง -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="panel p-3 text-center">
         <div class="text-xs text-base-content/70">ไรเดอร์ / กล่องรวม</div>
@@ -129,19 +130,62 @@
           {{ plan.total_distance_km | number:'1.2-2' }} <span class="text-sm font-normal">กม.</span>
         </div>
       </div>
-      <div class="panel p-3 text-center">
-        <div class="text-xs text-base-content/70">ค่าน้ำมันรวม</div>
-        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
-          {{ plan.total_fuel_cost | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
-        </div>
+      <div class="panel p-3 text-center" [class.border-secondary]="finishInfo()?.late">
+        <div class="text-xs text-base-content/70">เวลาถึงจุดสุดท้าย (กำหนด 12:30)</div>
+        @if (finishInfo(); as f) {
+          <div class="font-display text-xl sm:text-2xl font-bold mt-1" [class.text-secondary]="f.late" [class.text-success]="!f.late">
+            {{ f.text }} <span class="text-sm font-normal">น.</span>
+          </div>
+          @if (f.diffMin !== null) {
+            <div class="text-xs mt-0.5" [class.text-secondary]="f.late">
+              {{ f.late ? 'เลยกำหนด' : 'ก่อนกำหนด' }} {{ f.diffMin }} นาที
+            </div>
+          }
+        } @else {
+          <div class="font-display text-xl sm:text-2xl font-bold mt-1">-</div>
+        }
       </div>
       <div class="panel p-3 text-center" [class.border-secondary]="plan.total_late_stops > 0">
-        <div class="text-xs text-base-content/70">จุดที่เลท / ค่าปรับรวม</div>
+        <div class="text-xs text-base-content/70">จุดที่ส่งเลท</div>
         <div class="font-display text-xl sm:text-2xl font-bold mt-1" [class.text-secondary]="plan.total_late_stops > 0" [class.text-success]="plan.total_late_stops === 0">
-          {{ plan.total_late_stops }} จุด / {{ plan.total_penalty_baht | number:'1.0-0' }} บาท
+          {{ plan.total_late_stops }} / {{ plan.total_stops }} จุด
         </div>
       </div>
     </div>
+
+    <!-- แถวที่ 2: ต้นทุนและกำไร -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">รายได้</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
+          {{ plan.revenue | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
+        </div>
+      </div>
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">ต้นทุนอาหาร</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
+          {{ plan.food_cost | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
+        </div>
+      </div>
+      <div class="panel p-3 text-center">
+        <div class="text-xs text-base-content/70">ค่าจ้างไรเดอร์รวม</div>
+        <div class="font-display text-xl sm:text-2xl font-bold text-base-content mt-1">
+          {{ plan.rider_cost | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
+        </div>
+      </div>
+      <div class="panel p-3 text-center" [class.border-secondary]="plan.profit < 0">
+        <div class="text-xs text-base-content/70">{{ plan.profit < 0 ? 'ขาดทุน' : 'กำไร' }}</div>
+        <div class="font-display text-xl sm:text-2xl font-bold mt-1" [class.text-secondary]="plan.profit < 0" [class.text-success]="plan.profit >= 0">
+          {{ plan.profit | number:'1.2-2' }} <span class="text-sm font-normal">บาท</span>
+        </div>
+      </div>
+    </div>
+
+    @if (plan.profit < 0) {
+      <div class="alert alert-warning shadow-sm text-sm">
+        แผนนี้ขาดทุน ลองกด <strong>"จัดเส้นทาง / คำนวณใหม่"</strong> เพื่อให้ระบบหาเส้นทางที่ประหยัดกว่า
+      </div>
+    }
   }
 
   <!-- ส่วนแสดงแผนที่ขนาดใหญ่ (Map Section) -->
@@ -209,7 +253,7 @@
         </div>
         <div class="flex items-center gap-2">
           <span class="badge badge-xs badge-error">เลท</span>
-          <span>จุดส่งที่เลยกำหนด (ปรับ 20 บ./จุด)</span>
+          <span>จุดส่งที่เลยกำหนด (เกิน 12:30 น.)</span>
         </div>
       </div>
     </div>
@@ -221,7 +265,7 @@
       <div class="flex items-center justify-between">
         <h2 class="font-display text-lg font-semibold text-primary">ตารางสรุปผลต่อไรเดอร์</h2>
         <span class="text-xs text-base-content/70">
-          * ค่าปรับ 20 บาท ต่อจุดส่งที่เลทตามกติกา
+          * ต้องส่งถึงไม่เกิน 12:30 น. / ไรเดอร์รับไม่เกิน {{ MAX_ORDERS_PER_RIDER }} ออเดอร์
         </span>
       </div>
 
@@ -234,17 +278,16 @@
               <th>รหัสงาน</th>
               <th class="text-right">กล่อง</th>
               <th class="text-right">ระยะทาง (กม.)</th>
-              <th class="text-right">ค่าน้ำมัน (บาท)</th>
+              <th class="text-right">ค่าจ้างไรเดอร์ (บาท)</th>
               <th class="text-center">จุดส่งทั้งหมด</th>
               <th class="text-center">จุดที่เลท</th>
-              <th class="text-right">ค่าปรับรวม (บาท)</th>
               <th class="text-center">แผนที่ / รายละเอียด</th>
             </tr>
           </thead>
           <tbody>
             @if (plan.jobs.length === 0) {
               <tr>
-                <td colspan="10" class="text-center py-6 text-base-content/60">
+                <td colspan="9" class="text-center py-6 text-base-content/60">
                   ไม่มีข้อมูลไรเดอร์ในแผนนี้
                 </td>
               </tr>
@@ -266,7 +309,12 @@
                 <td class="text-right font-medium">{{ job.total_boxes }}</td>
                 <td class="text-right font-mono">{{ job.distance_km | number:'1.2-2' }}</td>
                 <td class="text-right font-mono">{{ job.fuel_cost | number:'1.2-2' }}</td>
-                <td class="text-center font-medium">{{ job.stops.length }}</td>
+                <td class="text-center font-medium">
+                  {{ job.stops.length }}
+                  @if (isOverLimit(job)) {
+                    <span class="badge badge-xs badge-warning ml-1" [title]="'เกินกำหนด ' + MAX_ORDERS_PER_RIDER + ' ออเดอร์/คน'">เกิน {{ MAX_ORDERS_PER_RIDER }}</span>
+                  }
+                </td>
                 <td class="text-center">
                   @if (job.late_stops_count > 0) {
                     <span class="badge badge-sm badge-error font-semibold">
@@ -277,9 +325,6 @@
                       0
                     </span>
                   }
-                </td>
-                <td class="text-right font-mono font-medium" [class.text-secondary]="job.penalty_baht > 0">
-                  {{ job.penalty_baht | number:'1.0-0' }}
                 </td>
                 <td class="text-center">
                   <div class="flex items-center justify-center gap-1">
@@ -313,7 +358,7 @@
               <!-- ตารางย่อยแสดงจุดส่งของไรเดอร์ (Collapsible Stops Detail) -->
               @if (expandedRiderIndex() === i) {
                 <tr>
-                  <td colspan="10" class="p-0 bg-base-200/50">
+                  <td colspan="9" class="p-0 bg-base-200/50">
                     <div class="p-3 pl-8 border-y border-dashed border-base-300">
                       <div class="text-xs font-semibold text-primary mb-2 flex items-center gap-2">
                         <span>ลำดับจุดส่งของ {{ job.rider_name }} ({{ job.stops.length }} จุด):</span>
@@ -332,7 +377,7 @@
                                   ออเดอร์ #{{ st.order_id }}
                                 </span>
                                 @if (st.is_late) {
-                                  <span class="badge badge-xs badge-error">เลท (+20บ.)</span>
+                                  <span class="badge badge-xs badge-error">เลท</span>
                                 } @else {
                                   <span class="badge badge-xs badge-success">ตรงเวลา</span>
                                 }
@@ -346,7 +391,7 @@
                               @if (st.address) {
                                 <div class="truncate" [title]="st.address"><strong>ที่อยู่:</strong> {{ st.address }}</div>
                               }
-                              <div><strong>เวลาส่งถึง:</strong> {{ st.arrival_time || '-' }}</div>
+                              <div><strong>เวลาส่งถึง:</strong> {{ formatTime(st.arrival_time) }}</div>
                               @if (st.google_maps_url) {
                                 <div class="pt-1">
                                   <a [href]="st.google_maps_url" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline font-semibold inline-flex items-center gap-1">
@@ -377,9 +422,6 @@
               <td class="text-center">{{ plan.total_stops }}</td>
               <td class="text-center" [class.text-secondary]="plan.total_late_stops > 0">
                 {{ plan.total_late_stops }} จุด
-              </td>
-              <td class="text-right font-mono" [class.text-secondary]="plan.total_penalty_baht > 0">
-                {{ plan.total_penalty_baht | number:'1.0-0' }}
               </td>
               <td></td>
             </tr>
@@ -414,7 +456,7 @@
           </p>
           <div class="p-3 bg-base-200/60 rounded text-xs text-base-content/80 border border-base-300 space-y-1">
             <div>• ระยะทางรวม: <strong>{{ p.total_distance_km | number:'1.1-2' }} กม.</strong></div>
-            <div>• ค่าน้ำมันรวม: <strong>{{ p.total_fuel_cost | number:'1.1-2' }} บาท</strong></div>
+            <div>• ค่าจ้างไรเดอร์รวม: <strong>{{ p.total_fuel_cost | number:'1.1-2' }} บาท</strong></div>
             <div class="text-secondary font-medium pt-1">
                คำเตือน: ออเดอร์ในแผนนี้จะถูกยกเลิกการจัดสรร และกลับสู่สถานะรอจัดส่ง (pending)
             </div>
