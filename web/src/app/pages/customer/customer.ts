@@ -437,8 +437,8 @@ export class CustomerPage implements OnInit, AfterViewInit, OnDestroy {
   // =====================================================
   async simulate(): Promise<void> {
     const count = this.simulateCount;
-    if (count === null || !Number.isInteger(count) || count < 1 || count > 200) {
-      this.showToast('error', 'จำนวนลูกค้าจำลองต้องเป็นจำนวนเต็ม 1-200');
+    if (count === null || !Number.isInteger(count) || count < 1 || count > 50) {
+      this.showToast('error', 'จำนวนลูกค้าจำลองต้องเป็นจำนวนเต็ม 1-50');
       return;
     }
 

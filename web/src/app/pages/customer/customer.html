@@ -12,12 +12,12 @@
           type="number"
           class="input input-sm join-item w-20 text-center"
           min="1"
-          max="200"
+          max="50"
           step="1"
           [(ngModel)]="simulateCount"
           name="simulateCount"
           aria-label="จำนวนลูกค้าที่จะสร้าง"
-          title="จำนวนลูกค้าที่จะสร้าง (1-200)"
+          title="จำนวนลูกค้าที่จะสร้าง (1-50)"
         />
         <button class="btn btn-sm btn-accent btn-outline join-item" (click)="simulate()" [disabled]="simulating()">
           @if (simulating()) {

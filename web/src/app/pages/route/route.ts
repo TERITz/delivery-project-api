@@ -475,7 +475,10 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  // จัดเส้นทางใหม่ (POST /routes/plan)
+  // ลำดับทางเลือกที่ขอ (เพิ่มทีละ 1 ทุกครั้งที่กดคำนวณใหม่ทับแผนเดิม)
+  private variant = 0;
+
+  // จัดเส้นทาง / คำนวณใหม่ (POST /routes/plan)
   async planRoutes(): Promise<void> {
     this.planning.set(true);
     this.error.set('');
@@ -485,6 +488,16 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     const body: RoutePlanRequest = {};
     if (this.planDate) {
       body.plan_date = this.planDate;
+    }
+
+    // ถ้ามีแผนของวันที่เลือกอยู่แล้ว = คำนวณใหม่ทับแผนนั้น และขอทางเลือกถัดไป
+    const cur = this.currentPlan();
+    if (cur && cur.plan_date?.slice(0, 10) === this.planDate) {
+      this.variant++;
+      body.replace_plan_id = cur.plan_id;
+      body.variant = this.variant;
+    } else {
+      this.variant = 0;
     }
 
     try {

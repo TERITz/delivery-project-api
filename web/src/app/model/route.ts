@@ -12,6 +12,8 @@ export interface RoutePlan {
 // body ของ POST /routes/plan (ไม่ส่งก็ได้ backend จะใช้วันนี้)
 export interface RoutePlanRequest {
   plan_date?: string;
+  replace_plan_id?: number; // คำนวณใหม่: ลบแผนเดิมนี้แล้วจัดใหม่
+  variant?: number; // 0 = วิธีเดิม, 1+ = ทางเลือกอื่น
 }
 
 // จุดส่งในผลลัพธ์ของ POST /routes/plan
