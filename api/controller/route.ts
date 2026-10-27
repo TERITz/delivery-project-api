@@ -87,6 +87,38 @@ router.post("/plan", async (req, res) => {
 
     const planDate = req.body?.plan_date || req.body?.date || todayString();
 
+    // ---- คำนวณใหม่: ปลดออเดอร์ของแผนเดิมกลับเป็น pending แล้วลบแผนเดิมก่อนจัดใหม่ ----
+    // (เดิมออเดอร์เป็น 'assigned' แล้ว จึงถูกกรองทิ้ง ทำให้คำนวณใหม่ไม่ได้)
+    const replacePlanId = Number(req.body?.replace_plan_id) || 0;
+    const variant = Math.max(0, Math.floor(Number(req.body?.variant) || 0)); // 0 = วิธีเดิม, 1+ = ทางเลือกอื่น
+
+    if (replacePlanId > 0) {
+      const [doneRows] = await connection.query(
+        `SELECT COUNT(*) AS cnt
+         FROM job_stop js
+         JOIN delivery_job dj ON js.job_id = dj.job_id
+         JOIN orders o ON js.order_id = o.order_id
+         WHERE dj.plan_id = ? AND (js.delivered_at IS NOT NULL OR o.order_status = 'delivered')`,
+        [replacePlanId]
+      );
+      if (Number((doneRows as any[])[0].cnt) > 0) {
+        await connection.rollback();
+        res.status(409).json({ error: "แผนนี้เริ่มส่งของแล้ว ไม่สามารถคำนวณใหม่ได้" });
+        return;
+      }
+
+      await connection.query(
+        `UPDATE orders o
+         JOIN job_stop js ON js.order_id = o.order_id
+         JOIN delivery_job dj ON js.job_id = dj.job_id
+         SET o.order_status = 'pending'
+         WHERE dj.plan_id = ? AND o.order_status <> 'delivered'`,
+        [replacePlanId]
+      );
+      // CASCADE จะลบ delivery_job และ job_stop ของแผนนี้ให้อัตโนมัติ
+      await connection.query("DELETE FROM route_plan WHERE plan_id = ?", [replacePlanId]);
+    }
+
     // ดึงออเดอร์ที่ค้างส่ง (status = 'pending') และล็อกแถว กันสองคำขอแย่งออเดอร์เดียวกัน
     const [orderRows] = await connection.query(
       `SELECT 
@@ -122,7 +154,15 @@ router.post("/plan", async (req, res) => {
 
     // เรียงตามมุมรอบร้าน แล้วหมุนให้เริ่มหลังช่องว่างที่กว้างที่สุด
     ordersWithAngle.sort((a, b) => a.angle - b.angle);
-    const sweepOrders = rotateAtLargestGap(ordersWithAngle);
+    let sweepOrders = rotateAtLargestGap(ordersWithAngle);
+
+    // ทางเลือกอื่น: เลื่อนจุดเริ่มตัดกลุ่ม (0-2 ตำแหน่ง) และสลับทิศการกวาดทุกๆ 3 ทางเลือก
+    // ทำให้การแบ่งกลุ่มไรเดอร์ต่างจากเดิม จึงได้เส้นทาง/ต้นทุนที่ต่างกัน
+    if (variant > 0 && sweepOrders.length > 1) {
+      const shift = variant % 3;
+      sweepOrders = [...sweepOrders.slice(shift), ...sweepOrders.slice(0, shift)];
+      if (Math.floor(variant / 3) % 2 === 1) sweepOrders.reverse();
+    }
 
     // แบ่งลงไรเดอร์: ไม่เกิน MAX_ORDERS_PER_RIDER ออเดอร์ และไม่เกิน BOX_CAPACITY กล่อง
     const riderBuckets: (typeof sweepOrders)[] = [];
@@ -300,6 +340,7 @@ router.post("/plan", async (req, res) => {
       message: "Route plan created successfully",
       plan_id: planId,
       plan_date: planDate,
+      variant,
       total_distance_km: totalPlanDistance,
       total_fuel_cost: totalPlanFee, // = ค่าจ้างไรเดอร์รวม
       riders_count: plannedJobs.length,

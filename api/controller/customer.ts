@@ -78,8 +78,8 @@ router.post("/simulate", async (req, res) => {
     if (req.body && req.body.count !== undefined) {
       count = Number(req.body.count);
     }
-    if (!Number.isInteger(count) || count < 1 || count > 200) {
-      res.status(400).json({ error: "count must be an integer between 1 and 200" });
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      res.status(400).json({ error: "count must be an integer between 1 and 50" });
       return;
     }
 
