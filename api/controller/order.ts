@@ -58,22 +58,33 @@ router.get("/nearby", async (req, res) => {
 });
 
 // 3. จำลองออเดอร์ 20–30 รายการ สุ่มจากลูกค้าจริงในระบบ
-// ตัวอย่าง: POST /orders/simulate หรือส่ง body { "count": 25 }
 router.post("/simulate", async (req, res) => {
   try {
-    // สุ่มจำนวนออเดอร์ 20-30 รายการ หรือตามที่ Front-end ส่งมา (count)
+    // เช็คจำนวนออเดอร์ทั้งหมดที่มีอยู่
+    const [countResult] = await conn.query("SELECT COUNT(*) as total FROM orders");
+    const totalOrders = (countResult as any[])[0].total;
+
+    if (totalOrders >= 30) {
+      res.status(400).json({ error: "ไม่สามารถจำลองออเดอร์ได้ (ออเดอร์เต็ม 30 รายการแล้ว)" });
+      return;
+    }
+
     let count = randomInt(20, MAX_SIMULATE_ORDERS);
     if (req.body && req.body.count !== undefined) {
       count = Number(req.body.count);
     }
 
-    // ตรวจ count: ต้องเป็นจำนวนเต็ม และอยู่ระหว่าง 1 ถึง MAX_SIMULATE_ORDERS
     if (!Number.isInteger(count) || count < 1 || count > MAX_SIMULATE_ORDERS) {
       res.status(400).json({ error: `count must be an integer between 1 and ${MAX_SIMULATE_ORDERS}` });
       return;
     }
 
-    // ดึง ID ลูกค้าทั้งหมดในระบบมาเตรียมไว้เพื่อทำการสุ่ม
+    // ปรับลดจำนวนที่จะสร้าง ไม่ให้เกินโควตา 30
+    const maxAllowed = 30 - totalOrders;
+    if (count > maxAllowed) {
+      count = maxAllowed;
+    }
+
     const [custRows] = await conn.query("SELECT customer_id FROM customer");
     const customers = custRows as any[];
     if (customers.length === 0) {
@@ -81,20 +92,17 @@ router.post("/simulate", async (req, res) => {
       return;
     }
 
-    // หมายเหตุจำลอง
     const mockNotes = ["ฝากไว้ที่ป้อม รปภ.", "โทรแจ้งล่วงหน้า 5 นาที", "วางไว้โต๊ะหน้าบ้าน", "ส่งก่อนเที่ยงตรงครับ", "ตึก 1 ชั้น 2 ห้อง 204", null];
     const today = todayString();
     const rows: any[] = [];
 
-    // วนลูปสร้างข้อมูลออเดอร์จำลองตามจำนวน count
     for (let i = 0; i < count; i++) {
-      const randomCust = customers[randomInt(0, customers.length - 1)].customer_id; // สุ่มลูกค้า
-      const randomBoxes = randomInt(1, MAX_BOX_PER_ORDER); // สุ่มกล่อง 1-3
-      const randomNote = mockNotes[randomInt(0, mockNotes.length - 1)]; // สุ่มหมายเหตุ
-      rows.push([randomCust, today, randomBoxes, "pending", randomNote]); // เก็บลง Array
+      const randomCust = customers[randomInt(0, customers.length - 1)].customer_id; 
+      const randomBoxes = randomInt(1, MAX_BOX_PER_ORDER); 
+      const randomNote = mockNotes[randomInt(0, mockNotes.length - 1)]; 
+      rows.push([randomCust, today, randomBoxes, "pending", randomNote]); 
     }
 
-    // ใช้ Bulk Insert (เพิ่มข้อมูลทีละหลายๆ แถวพร้อมกัน) เพื่อความรวดเร็ว
     const sql = "INSERT INTO orders (customer_id, order_date, box_count, order_status, delivery_note) VALUES ?";
     const [result] = await conn.query(sql, [rows]);
     res.status(201).json({ affected_row: (result as any).affectedRows, count });
