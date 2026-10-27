@@ -7,7 +7,6 @@ import { SHOP } from '../../config/shop';
 import { RouteService } from '../../services/api/route.service';
 import {
   RoutePlan,
-  RoutePlanCreateResponse,
   RoutePlanDetail,
   RoutePlanRequest,
 } from '../../model/route';
@@ -36,11 +35,10 @@ export interface NormalizedJob {
   route_color: string;
   total_boxes: number;
   distance_km: number;
-  fuel_cost: number;
+  fuel_cost: number; // ความหมายจริง = ค่าจ้างไรเดอร์
   job_status?: string;
   stops: NormalizedStop[];
   late_stops_count: number;
-  penalty_baht: number;
 }
 
 export interface NormalizedPlanView {
@@ -48,13 +46,27 @@ export interface NormalizedPlanView {
   plan_date: string;
   plan_status?: string;
   total_distance_km: number;
-  total_fuel_cost: number;
+  total_fuel_cost: number; // ความหมายจริง = ค่าจ้างไรเดอร์รวม
   shop: { name: string; latitude: number; longitude: number };
   jobs: NormalizedJob[];
   total_boxes: number;
   total_stops: number;
   total_late_stops: number;
-  total_penalty_baht: number;
+  // สรุปจาก backend
+  revenue: number;
+  food_cost: number;
+  rider_cost: number;
+  profit: number;
+  finish_time: string | null;
+}
+
+// ฟิลด์สรุปที่ backend ส่งเพิ่ม (ถ้า model/route.ts ยังไม่มี ใช้ตัวนี้ครอบไว้ก่อน)
+interface PlanSummaryExtras {
+  revenue?: number | string;
+  food_cost?: number | string;
+  rider_cost?: number | string;
+  profit?: number | string;
+  finish_time?: string | null;
 }
 
 @Component({
@@ -95,8 +107,94 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
   private map: L.Map | null = null;
   private layerGroup: L.LayerGroup | null = null;
 
-  // กฎค่าปรับ
-  readonly LATE_PENALTY_RATE = 20;
+  // กติกาตามโจทย์
+  readonly MAX_ORDERS_PER_RIDER = 3; // ไรเดอร์รับไม่เกินคนละ 3 ออเดอร์
+  readonly DEADLINE_MIN = 12 * 60 + 30; // ต้องส่งถึงไม่เกิน 12:30
+
+  // แคชเส้นทางถนน กันยิง API ซ้ำเวลากรองไรเดอร์/สลับแผน
+  private roadGeometryCache = new Map<string, [number, number][]>();
+  // ใช้กันผลลัพธ์เก่าที่ตอบกลับมาช้า ไปวาดทับแผนที่ที่เปลี่ยนไปแล้ว
+  private renderVersion = 0;
+  // ใช้กันผลโหลดแผนเก่าที่ตอบกลับมาช้า ไปทับแผนที่เพิ่งเลือก
+  private selectVersion = 0;
+
+  // สรุปเวลาถึงจุดส่งสุดท้าย เทียบกับ 12:30
+  finishInfo = computed(() => {
+    const plan = this.currentPlan();
+    if (!plan?.finish_time) return null;
+    const text = this.formatTime(plan.finish_time);
+    const m = /^(\d{2}):(\d{2})$/.exec(text);
+    if (!m) return { text, late: false, diffMin: null as number | null };
+    const mins = Number(m[1]) * 60 + Number(m[2]);
+    const diff = this.DEADLINE_MIN - mins;
+    return { text, late: diff < 0, diffMin: Math.abs(diff) as number | null };
+  });
+
+  // =====================================================
+  // ตัวช่วย: ป้องกัน XSS เวลาแทรกข้อมูลลงใน HTML ของแผนที่
+  // =====================================================
+  private esc(value: unknown): string {
+    return String(value ?? '').replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string),
+    );
+  }
+
+  private safeUrl(url?: string | null): string | null {
+    return url && /^https?:\/\//i.test(url) ? url : null;
+  }
+
+  // แปลงเวลาเป็น HH:mm (รองรับทั้งสตริง 'YYYY-MM-DD HH:mm:ss' และ ISO ที่มี Z/offset)
+  formatTime(value: string | null | undefined): string {
+    if (!value) return '-';
+    if (/(Z|[+-]\d{2}:?\d{2})$/.test(value)) {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleTimeString('en-GB', {
+          timeZone: 'Asia/Bangkok',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        });
+      }
+    }
+    const m = /(\d{1,2}):(\d{2})/.exec(value);
+    return m ? `${m[1].padStart(2, '0')}:${m[2]}` : value;
+  }
+
+  // ไรเดอร์คนนี้ได้เกินจำนวนออเดอร์ที่ตกลงกันไว้หรือไม่
+  isOverLimit(job: NormalizedJob): boolean {
+    return job.stops.length > this.MAX_ORDERS_PER_RIDER;
+  }
+
+  // ดึงเส้นทางตามถนนจริงจาก OSRM (ล้มเหลวจะคืน null แล้วใช้เส้นตรงเดิม)
+  private async fetchRoadGeometry(
+    points: [number, number][],
+  ): Promise<[number, number][] | null> {
+    const key = points.map(([la, ln]) => `${la.toFixed(6)},${ln.toFixed(6)}`).join(';');
+    const cached = this.roadGeometryCache.get(key);
+    if (cached) return cached;
+
+    // OSRM ใช้ลำดับ lng,lat (กลับกับ Leaflet)
+    const coords = points.map(([la, ln]) => `${ln},${la}`).join(';');
+    const url =
+      `https://router.project-osrm.org/route/v1/driving/${coords}` +
+      `?overview=full&geometries=geojson`;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.code !== 'Ok' || !data.routes?.length) return null;
+
+      const geometry: [number, number][] = data.routes[0].geometry.coordinates.map(
+        ([lng, lat]: [number, number]) => [lat, lng],
+      );
+      this.roadGeometryCache.set(key, geometry);
+      return geometry;
+    } catch {
+      return null;
+    }
+  }
 
   ngOnInit(): void {
     this.loadPlans();
@@ -107,15 +205,16 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngOnDestroy(): void {
+    // ยกเลิกงานที่ค้างอยู่ ไม่ให้ไปวาด/ตั้งค่าหลังหน้าถูกทำลาย
+    this.renderVersion++;
+    this.selectVersion++;
     if (this.map) {
       this.map.remove();
       this.map = null;
     }
   }
 
-  // =====================================================
   // สร้างและจัดการแผนที่ Leaflet
-  // =====================================================
   private initMap(): void {
     const el = this.mapContainer()?.nativeElement;
     if (!el || this.map) return;
@@ -146,6 +245,7 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
   renderMapRoutes(): void {
     if (!this.map || !this.layerGroup) return;
 
+    const version = ++this.renderVersion;
     this.layerGroup.clearLayers();
 
     const plan = this.currentPlan();
@@ -153,9 +253,9 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
 
     const shopLat = plan.shop?.latitude ?? SHOP.latitude;
     const shopLng = plan.shop?.longitude ?? SHOP.longitude;
-    const shopName = plan.shop?.name || SHOP.name;
+    const shopName = this.esc(plan.shop?.name || SHOP.name);
 
-    // หมุดร้าน (จุดศูนย์กลาง / ร้าน) - รูปทรงหมุดแผนที่
+    // หมุดร้าน (จุดเริ่มต้น)
     const shopIcon = L.divIcon({
       className: 'shop-marker-icon',
       html: `
@@ -199,6 +299,8 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     filteredJobs.forEach((job) => {
       if (!job) return;
       const sortedStops = [...job.stops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+      const color = this.esc(job.route_color || '#1f4d3c');
+      const riderName = this.esc(job.rider_name);
 
       // เส้นทางของไรเดอร์: เริ่มจากร้านไปยังจุดส่งต่าง ๆ ตามลำดับ
       const routePoints: [number, number][] = [[shopLat, shopLng]];
@@ -209,28 +311,26 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
         bounds.extend([stop.latitude, stop.longitude]);
         hasPoints = true;
 
-        // ไอคอนหมุดแผนที่ปลายแหลมพร้อมตัวเลขลำดับข้างใน
         const isLate = stop.is_late;
-        const color = job.route_color || '#1f4d3c';
+        const seq = Number(stop.stop_sequence);
+
+        // ไอคอนหมุดแผนที่พร้อมตัวเลขลำดับข้างใน
         const stopIcon = L.divIcon({
           className: 'rider-stop-marker',
           html: `
             <div style="position: relative; width: 34px; height: 44px; cursor: pointer;">
               <svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44" style="filter: drop-shadow(0 3px 4px rgba(0,0,0,0.35));">
-                <!-- ตัวหมุดแผนที่ปลายแหลมชี้ลงล่าง -->
                 <path d="M17 43 C17 43 32 27 32 16 C32 7.7 25.3 1 17 1 C8.7 1 2 7.7 2 16 C2 27 17 43 17 43 Z"
                       fill="${color}"
                       stroke="${isLate ? '#b23a25' : '#ffffff'}"
                       stroke-width="${isLate ? '3' : '2.5'}" />
-                <!-- วงกลมสีขาวตรงกลางหมุดสำหรับวางเลขลำดับให้อ่านง่าย -->
                 <circle cx="17" cy="16" r="10.5" fill="#ffffff" />
-                <!-- ตัวเลขลำดับการส่ง -->
                 <text x="17" y="20.5"
                       font-family="system-ui, -apple-system, sans-serif"
                       font-size="12"
                       font-weight="bold"
                       fill="${color}"
-                      text-anchor="middle">${stop.stop_sequence}</text>
+                      text-anchor="middle">${seq}</text>
               </svg>
               ${isLate ? `
                 <span style="
@@ -255,31 +355,33 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
           popupAnchor: [0, -44],
         });
 
+        const mapsUrl = this.safeUrl(stop.google_maps_url);
+
         const popupHtml = `
           <div style="font-family: inherit; font-size: 13px; color: #2b2218; line-height: 1.5; min-width: 190px;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-bottom: 6px;">
-              <span style="font-weight: 700; color: ${job.route_color}; font-size: 14px;">
-                ${job.rider_name}
+              <span style="font-weight: 700; color: ${color}; font-size: 14px;">
+                ${riderName}
               </span>
-              <span style="background: ${job.route_color}; color: #fff; padding: 1px 6px; border-radius: 9999px; font-size: 11px; font-weight: 600;">
-                จุดที่ ${stop.stop_sequence}
+              <span style="background: ${color}; color: #fff; padding: 1px 6px; border-radius: 9999px; font-size: 11px; font-weight: 600;">
+                จุดที่ ${seq}
               </span>
             </div>
-            <div><strong>ออเดอร์:</strong> #${stop.order_id}</div>
-            ${stop.customer_name ? `<div><strong>ลูกค้า:</strong> ${stop.customer_name}</div>` : ''}
-            ${stop.phone ? `<div><strong>โทร:</strong> <a href="tel:${stop.phone}" style="color: #1f4d3c; text-decoration: underline;">${stop.phone}</a></div>` : ''}
-            ${stop.address ? `<div><strong>ที่อยู่:</strong> ${stop.address}</div>` : ''}
-            ${stop.box_count ? `<div><strong>จำนวนกล่อง:</strong> ${stop.box_count} กล่อง</div>` : ''}
-            <div><strong>เวลานัดส่ง:</strong> ${stop.arrival_time || '-'}</div>
+            <div><strong>ออเดอร์:</strong> #${Number(stop.order_id)}</div>
+            ${stop.customer_name ? `<div><strong>ลูกค้า:</strong> ${this.esc(stop.customer_name)}</div>` : ''}
+            ${stop.phone ? `<div><strong>โทร:</strong> <a href="tel:${this.esc(stop.phone)}" style="color: #1f4d3c; text-decoration: underline;">${this.esc(stop.phone)}</a></div>` : ''}
+            ${stop.address ? `<div><strong>ที่อยู่:</strong> ${this.esc(stop.address)}</div>` : ''}
+            ${stop.box_count ? `<div><strong>จำนวนกล่อง:</strong> ${Number(stop.box_count)} กล่อง</div>` : ''}
+            <div><strong>เวลาส่งถึง:</strong> ${this.esc(this.formatTime(stop.arrival_time))}</div>
             <div style="margin-top: 6px;">
-              ${isLate 
-                ? `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">⚠️ ส่งเลท (ปรับ ${this.LATE_PENALTY_RATE} บาท)</span>` 
+              ${isLate
+                ? `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">⚠️ ส่งเลท (เกิน 12:30)</span>`
                 : `<span style="background: #dcfce7; color: #166534; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 11px;">✓ ส่งตรงเวลา</span>`}
             </div>
-            ${stop.delivery_note ? `<div style="margin-top: 4px; font-size: 12px; color: #555;"><em>โน้ต: ${stop.delivery_note}</em></div>` : ''}
-            ${stop.google_maps_url ? `
+            ${stop.delivery_note ? `<div style="margin-top: 4px; font-size: 12px; color: #555;"><em>โน้ต: ${this.esc(stop.delivery_note)}</em></div>` : ''}
+            ${mapsUrl ? `
               <div style="margin-top: 8px; padding-top: 4px; border-top: 1px dashed #ddd;">
-                <a href="${stop.google_maps_url}" target="_blank" rel="noopener noreferrer" style="color: #1f4d3c; font-weight: 600; text-decoration: underline; font-size: 12px;">
+                <a href="${this.esc(mapsUrl)}" target="_blank" rel="noopener noreferrer" style="color: #1f4d3c; font-weight: 600; text-decoration: underline; font-size: 12px;">
                   เปิดใน Google Maps ↗
                 </a>
               </div>
@@ -294,14 +396,25 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
 
       // วาดเส้น Polyline เชื่อมจุดส่งตามลำดับ
       if (routePoints.length > 1) {
+        const lineColor = job.route_color || '#1f4d3c';
+
+        // เส้นตรงแบบประจาง ๆ แสดงทันทีระหว่างรอ OSRM
         const polyline = L.polyline(routePoints, {
-          color: job.route_color || '#1f4d3c',
+          color: lineColor,
           weight: 4,
-          opacity: 0.85,
+          opacity: 0.45,
+          dashArray: '6 8',
           lineJoin: 'round',
           lineCap: 'round',
         });
         this.layerGroup!.addLayer(polyline);
+
+        // ได้เส้นถนนจริงแล้วค่อยสลับเป็นเส้นทึบตามถนน
+        this.fetchRoadGeometry(routePoints).then((geometry) => {
+          if (!geometry || version !== this.renderVersion) return;
+          polyline.setLatLngs(geometry);
+          polyline.setStyle({ opacity: 0.85, dashArray: '' });
+        });
       }
     });
 
@@ -317,9 +430,7 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     }, 100);
   }
 
-  // =====================================================
   // โหลดรายการแผนทั้งหมด (GET /routes)
-  // =====================================================
   async loadPlans(): Promise<void> {
     this.loading.set(true);
     this.error.set('');
@@ -328,10 +439,11 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
       this.plans.set(data || []);
 
       if (data && data.length > 0) {
-        // เลือกแผนล่าสุด (อันแรกในลิสต์)
-        const firstPlan = data[0];
-        this.selectPlan(firstPlan.plan_id);
+        const current = this.selectedPlanId();
+        const target = data.find((p) => p.plan_id === current) ?? data[0];
+        await this.selectPlan(target.plan_id);
       } else {
+        this.selectVersion++;
         this.selectedPlanId.set(null);
         this.currentPlan.set(null);
         this.layerGroup?.clearLayers();
@@ -343,10 +455,9 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  // =====================================================
-  // เลือกดูแผนเก่า (GET /routes/:plan_id)
-  // =====================================================
+  // เลือกดูแผน (GET /routes/:plan_id)
   async selectPlan(planId: number): Promise<void> {
+    const version = ++this.selectVersion;
     this.selectedPlanId.set(planId);
     this.selectedRiderIndex.set(null);
     this.expandedRiderIndex.set(null);
@@ -355,17 +466,16 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
 
     try {
       const detail = await this.routeService.getById(planId);
-      const normalized = this.normalizeDetailResponse(detail);
-      this.currentPlan.set(normalized);
+      if (version !== this.selectVersion) return; // มีการเลือกแผนอื่นแทรกเข้ามาแล้ว
+      this.currentPlan.set(this.normalizeDetailResponse(detail));
       this.renderMapRoutes();
     } catch (err) {
+      if (version !== this.selectVersion) return;
       this.error.set(getApiError(err));
     }
   }
 
-  // =====================================================
   // จัดเส้นทางใหม่ (POST /routes/plan)
-  // =====================================================
   async planRoutes(): Promise<void> {
     this.planning.set(true);
     this.error.set('');
@@ -379,21 +489,11 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
 
     try {
       const res = await this.routeService.plan(body);
-      this.plans.set(await this.routeService.getAll());
+      this.plans.set((await this.routeService.getAll()) || []);
+      // โหลดรายละเอียดเต็ม (มีชื่อลูกค้า เบอร์ ที่อยู่) แล้ววาดแผนที่
       await this.selectPlan(res.plan_id);
-      this.successMessage.set(res.message || 'จัดเส้นทางเรียบร้อยแล้ว'); // selectPlan ล้างข้อความ เลยตั้งหลังสุด
-
-      // แปลงผลลัพธ์ของ POST /routes/plan ให้พร้อมแสดงผลทันที
-      const normalized = this.normalizeCreateResponse(res);
-      this.currentPlan.set(normalized);
-      this.selectedPlanId.set(res.plan_id);
-
-      // โหลดประวัติแผนใหม่เพื่อให้แผนใหม่ปรากฏในดรอปดาวน์
-      const updatedList = await this.routeService.getAll();
-      this.plans.set(updatedList || []);
-
-      // วาดแผนที่ทันที
-      this.renderMapRoutes();
+      // selectPlan ล้างข้อความ เลยตั้งหลังสุด
+      this.successMessage.set(res.message || 'จัดเส้นทางเรียบร้อยแล้ว');
     } catch (err) {
       this.error.set(getApiError(err));
     } finally {
@@ -401,9 +501,7 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  // =====================================================
   // การลบแผน (DELETE /routes/:plan_id)
-  // =====================================================
   openDeleteModal(): void {
     const activeId = this.selectedPlanId();
     if (!activeId) return;
@@ -437,10 +535,10 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
     try {
       await this.routeService.delete(target.plan_id);
       this.closeDeleteModal();
-      this.successMessage.set(`ลบแผน #${target.plan_id} เรียบร้อยแล้ว`);
 
-      // โหลดรายการแผนใหม่
+      // โหลดรายการแผนใหม่ (selectPlan ข้างในจะล้างข้อความ จึงตั้งข้อความหลังสุด)
       await this.loadPlans();
+      this.successMessage.set(`ลบแผน #${target.plan_id} เรียบร้อยแล้ว`);
     } catch (err) {
       this.error.set(getApiError(err));
     } finally {
@@ -475,70 +573,21 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
 
   // =====================================================
   // ตัวแปลงข้อมูลให้เป็นรูปแบบมาตรฐาน (Normalization)
-  // ระวัง: is_late ใน POST /routes/plan เป็น 0/1 แต่ endpoint อื่นเป็น boolean
+  // is_late อาจมาเป็น 0/1 หรือ boolean
   // =====================================================
   private toBoolean(val: any): boolean {
     return val === true || val === 1 || val === '1' || val === 'true';
   }
 
-  private normalizeCreateResponse(res: RoutePlanCreateResponse): NormalizedPlanView {
-    const jobs: NormalizedJob[] = (res.jobs || []).map((j) => {
-      const stops: NormalizedStop[] = (j.stops || []).map((s) => ({
-        order_id: s.order_id,
-        stop_sequence: s.stop_sequence,
-        arrival_time: s.arrival_time,
-        is_late: this.toBoolean(s.is_late), // แปลง 0/1 เป็น boolean
-        latitude: Number(s.latitude),
-        longitude: Number(s.longitude),
-        google_maps_url: s.google_maps_url || s.google_maps_link,
-      }));
+  private normalizeDetailResponse(detailRaw: RoutePlanDetail): NormalizedPlanView {
+    const detail = detailRaw as RoutePlanDetail & PlanSummaryExtras;
 
-      const lateCount = stops.filter((s) => s.is_late).length;
-
-      return {
-        rider_name: j.rider_name,
-        access_code: j.access_code,
-        route_color: j.route_color,
-        total_boxes: Number(j.total_boxes || 0),
-        distance_km: Number(j.distance_km || 0),
-        fuel_cost: Number(j.fuel_cost || 0),
-        stops,
-        late_stops_count: lateCount,
-        penalty_baht: lateCount * this.LATE_PENALTY_RATE,
-      };
-    });
-
-    const totalBoxes = jobs.reduce((sum, j) => sum + j.total_boxes, 0);
-    const totalStops = jobs.reduce((sum, j) => sum + j.stops.length, 0);
-    const totalLateStops = jobs.reduce((sum, j) => sum + j.late_stops_count, 0);
-    const totalPenalty = totalLateStops * this.LATE_PENALTY_RATE;
-
-    return {
-      plan_id: res.plan_id,
-      plan_date: res.plan_date,
-      plan_status: 'planned',
-      total_distance_km: Number(res.total_distance_km || 0),
-      total_fuel_cost: Number(res.total_fuel_cost || 0),
-      shop: {
-        name: SHOP.name,
-        latitude: SHOP.latitude,
-        longitude: SHOP.longitude,
-      },
-      jobs,
-      total_boxes: totalBoxes,
-      total_stops: totalStops,
-      total_late_stops: totalLateStops,
-      total_penalty_baht: totalPenalty,
-    };
-  }
-
-  private normalizeDetailResponse(detail: RoutePlanDetail): NormalizedPlanView {
     const jobs: NormalizedJob[] = (detail.jobs || []).map((j) => {
       const stops: NormalizedStop[] = (j.stops || []).map((s) => ({
         order_id: s.order_id,
         stop_sequence: s.stop_sequence,
         arrival_time: s.arrival_time,
-        is_late: this.toBoolean(s.is_late), // แปลงเป็น boolean
+        is_late: this.toBoolean(s.is_late),
         latitude: Number(s.latitude),
         longitude: Number(s.longitude),
         customer_name: s.first_name ? `${s.first_name} ${s.last_name || ''}`.trim() : undefined,
@@ -550,8 +599,6 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
         google_maps_url: s.google_maps_url || s.google_maps_link,
       }));
 
-      const lateCount = stops.filter((s) => s.is_late).length;
-
       return {
         job_id: j.job_id,
         rider_name: j.rider_name,
@@ -562,15 +609,9 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
         fuel_cost: Number(j.fuel_cost || 0),
         job_status: j.job_status,
         stops,
-        late_stops_count: lateCount,
-        penalty_baht: lateCount * this.LATE_PENALTY_RATE,
+        late_stops_count: stops.filter((s) => s.is_late).length,
       };
     });
-
-    const totalBoxes = jobs.reduce((sum, j) => sum + j.total_boxes, 0);
-    const totalStops = jobs.reduce((sum, j) => sum + j.stops.length, 0);
-    const totalLateStops = jobs.reduce((sum, j) => sum + j.late_stops_count, 0);
-    const totalPenalty = totalLateStops * this.LATE_PENALTY_RATE;
 
     return {
       plan_id: detail.plan_id,
@@ -584,10 +625,14 @@ export class RoutePage implements OnInit, OnDestroy, AfterViewInit {
         longitude: SHOP.longitude,
       },
       jobs,
-      total_boxes: totalBoxes,
-      total_stops: totalStops,
-      total_late_stops: totalLateStops,
-      total_penalty_baht: totalPenalty,
+      total_boxes: jobs.reduce((sum, j) => sum + j.total_boxes, 0),
+      total_stops: jobs.reduce((sum, j) => sum + j.stops.length, 0),
+      total_late_stops: jobs.reduce((sum, j) => sum + j.late_stops_count, 0),
+      revenue: Number(detail.revenue || 0),
+      food_cost: Number(detail.food_cost || 0),
+      rider_cost: Number(detail.rider_cost ?? detail.total_fuel_cost ?? 0),
+      profit: Number(detail.profit || 0),
+      finish_time: detail.finish_time ?? null,
     };
   }
 }
