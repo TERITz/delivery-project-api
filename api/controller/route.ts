@@ -8,7 +8,6 @@ import {
   SPEED_KMH,
   SERVICE_MIN,
   ROAD_FACTOR,
-  FUEL_BAHT_PER_KM,
   ROUTE_COLORS,
 } from "../config/config";
 import { distanceKm, round2, toDateTime, todayString } from "../utils/utils";
@@ -16,10 +15,68 @@ import { OrderWithCustomer } from "../model/order";
 
 export const router = express.Router();
 
-// ฟังก์ชันสร้าง access_code แบบสุ่ม (เช่น R1-1014, R2-9428)
-function generateAccessCode(riderIndex: number): string {
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `R${riderIndex + 1}-${rand}`;
+// =====================================================
+// ค่าคงที่ตามโจทย์ (แนะนำให้ย้ายไป config/config.ts ภายหลัง)
+// =====================================================
+const MAX_ORDERS_PER_RIDER = 3; // ไรเดอร์รับไม่เกินคนละ 3 ออเดอร์
+const RIDER_BASE_FEE = 15; // ค่าเรียกไรเดอร์ 15 บาท/เที่ยว
+const RIDER_RATE_PER_BOX_KM = 2; // 2 บาท / กล่อง / กม.
+const PRICE_PER_BOX = 65; // ราคาขายต่อกล่อง
+const FOOD_COST_PER_BOX = 40; // ต้นทุนอาหารต่อกล่อง
+
+// ค่าจ้างไรเดอร์ = 15 + (2 x จำนวนกล่อง x ระยะทางรวม กม.)
+// เก็บลงคอลัมน์ fuel_cost เดิม (ความหมายจริงคือ "ค่าจ้างไรเดอร์")
+function calcRiderFee(totalBoxes: number, distanceKmTotal: number): number {
+  return round2(RIDER_BASE_FEE + RIDER_RATE_PER_BOX_KM * totalBoxes * distanceKmTotal);
+}
+
+// สรุปรายรับ / ต้นทุน / กำไรของทั้งแผน
+function calcProfitSummary(totalBoxes: number, totalRiderFee: number) {
+  const revenue = round2(totalBoxes * PRICE_PER_BOX);
+  const foodCost = round2(totalBoxes * FOOD_COST_PER_BOX);
+  const profit = round2(revenue - foodCost - totalRiderFee);
+  return { revenue, food_cost: foodCost, rider_cost: round2(totalRiderFee), profit };
+}
+
+// หมุนลิสต์ที่เรียงตามมุมแล้ว ให้เริ่มต้นหลังช่องว่างมุมที่กว้างที่สุด
+// แก้ปัญหารอยต่อที่ ±π (ลูกค้าทิศตะวันตกถูกแยกไปอยู่ปลายลิสต์ทั้งสองด้าน)
+function rotateAtLargestGap<T extends { angle: number }>(sorted: T[]): T[] {
+  const n = sorted.length;
+  if (n < 2) return sorted;
+  let maxGap = -1;
+  let startIdx = 0;
+  for (let i = 0; i < n; i++) {
+    const next = sorted[(i + 1) % n].angle;
+    let gap = next - sorted[i].angle;
+    if (i === n - 1) gap += 2 * Math.PI;
+    if (gap > maxGap) {
+      maxGap = gap;
+      startIdx = (i + 1) % n;
+    }
+  }
+  return [...sorted.slice(startIdx), ...sorted.slice(0, startIdx)];
+}
+
+// สร้าง access_code แบบสุ่ม (เช่น R1-1014) และเช็คไม่ให้ซ้ำทั้งในแผนนี้และใน DB
+async function generateUniqueAccessCode(
+  connection: any,
+  riderIndex: number,
+  usedInPlan: Set<string>
+): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    const code = `R${riderIndex + 1}-${rand}`;
+    if (usedInPlan.has(code)) continue;
+    const [rows] = await connection.query(
+      "SELECT 1 FROM delivery_job WHERE access_code = ? LIMIT 1",
+      [code]
+    );
+    if ((rows as any[]).length === 0) {
+      usedInPlan.add(code);
+      return code;
+    }
+  }
+  throw new Error("Cannot generate unique access code");
 }
 
 // 1. POST /routes/plan - จัดเส้นทางให้ไรเดอร์ทุกคน
@@ -30,7 +87,7 @@ router.post("/plan", async (req, res) => {
 
     const planDate = req.body?.plan_date || req.body?.date || todayString();
 
-    // ดึงออเดอร์ที่ค้างส่ง (status = 'pending')
+    // ดึงออเดอร์ที่ค้างส่ง (status = 'pending') และล็อกแถว กันสองคำขอแย่งออเดอร์เดียวกัน
     const [orderRows] = await connection.query(
       `SELECT 
         o.order_id, o.customer_id, o.order_date, o.box_count, 
@@ -39,7 +96,8 @@ router.post("/plan", async (req, res) => {
       FROM orders o
       JOIN customer c ON o.customer_id = c.customer_id
       WHERE o.order_status = 'pending' AND o.order_date <= ?
-      ORDER BY o.order_id ASC`,
+      ORDER BY o.order_id ASC
+      FOR UPDATE`,
       [planDate]
     );
 
@@ -51,8 +109,7 @@ router.post("/plan", async (req, res) => {
       return;
     }
 
-    // คำนวณระยะห่างจากร้านสำหรับแต่ละออเดอร์ เพื่อใช้จัดกลุ่มแบบ Polar Angle หรือ Proximity
-    // ออเดอร์แต่ละตัวคำนวณมุมองศาจากร้าน (atan2) เพื่อแบ่ง cluster ให้ไรเดอร์แต่ละคนตามโซนได้อย่างเป็นธรรมชาติ
+    // คำนวณมุมองศาจากร้าน (atan2) เพื่อแบ่งโซนให้ไรเดอร์แต่ละคน
     const ordersWithAngle = pendingOrders.map((o) => {
       const angle = Math.atan2(o.latitude - SHOP.latitude, o.longitude - SHOP.longitude);
       const distFromShop = distanceKm(SHOP.latitude, SHOP.longitude, o.latitude, o.longitude);
@@ -63,16 +120,20 @@ router.post("/plan", async (req, res) => {
       };
     });
 
-    // เรียงตามองศารอบร้าน (Angular sorting) เพื่อให้จุดที่อยู่ใกล้ๆ กันอยู่ในโซนเดียวกัน
+    // เรียงตามมุมรอบร้าน แล้วหมุนให้เริ่มหลังช่องว่างที่กว้างที่สุด
     ordersWithAngle.sort((a, b) => a.angle - b.angle);
+    const sweepOrders = rotateAtLargestGap(ordersWithAngle);
 
-    // ทำ Bin Packing แบ่งลงไรเดอร์: ความจุต่อไรเดอร์ <= BOX_CAPACITY (10 กล่อง)
-    const riderBuckets: (typeof ordersWithAngle)[] = [];
-    let currentBucket: typeof ordersWithAngle = [];
+    // แบ่งลงไรเดอร์: ไม่เกิน MAX_ORDERS_PER_RIDER ออเดอร์ และไม่เกิน BOX_CAPACITY กล่อง
+    const riderBuckets: (typeof sweepOrders)[] = [];
+    let currentBucket: typeof sweepOrders = [];
     let currentBoxes = 0;
 
-    for (const order of ordersWithAngle) {
-      if (currentBoxes + order.box_count <= BOX_CAPACITY) {
+    for (const order of sweepOrders) {
+      if (
+        currentBucket.length < MAX_ORDERS_PER_RIDER &&
+        currentBoxes + order.box_count <= BOX_CAPACITY
+      ) {
         currentBucket.push(order);
         currentBoxes += order.box_count;
       } else {
@@ -87,14 +148,14 @@ router.post("/plan", async (req, res) => {
       riderBuckets.push(currentBucket);
     }
 
-    // สำหรับแต่ละ Bucket ของไรเดอร์: จัดลำดับการส่งด้วย Nearest Neighbor TSP (เริ่มจากร้าน SHOP)
+    // สำหรับแต่ละไรเดอร์: จัดลำดับการส่งด้วย Nearest Neighbor (เริ่มจากร้าน)
     interface PlannedJob {
       rider_name: string;
       access_code: string;
       route_color: string;
       total_boxes: number;
       distance_km: number;
-      fuel_cost: number;
+      fuel_cost: number; // = ค่าจ้างไรเดอร์
       stops: {
         order_id: number;
         stop_sequence: number;
@@ -109,20 +170,21 @@ router.post("/plan", async (req, res) => {
     }
 
     const plannedJobs: PlannedJob[] = [];
+    const usedCodes = new Set<string>();
     let totalPlanDistance = 0;
-    let totalPlanFuel = 0;
+    let totalPlanFee = 0;
+    let latestArrivalMin = 0; // เวลาถึงจุดส่งสุดท้ายที่ช้าที่สุดของทั้งแผน
 
     for (let i = 0; i < riderBuckets.length; i++) {
       const bucket = [...riderBuckets[i]];
       const riderName = `ไรเดอร์ ${i + 1}`;
-      const accessCode = generateAccessCode(i);
+      const accessCode = await generateUniqueAccessCode(connection, i, usedCodes);
       const routeColor = ROUTE_COLORS[i % ROUTE_COLORS.length];
       const totalBoxes = bucket.reduce((sum, o) => sum + o.box_count, 0);
 
-      // เรียงลำดับจุดส่งแบบ Nearest Neighbor
       let curLat = SHOP.latitude;
       let curLng = SHOP.longitude;
-      let currentTimeMin = COOK_DONE_MIN; // 11:30 = 690 min
+      let currentTimeMin = COOK_DONE_MIN; // 11:30 = 690 นาที
       let jobDistance = 0;
 
       const stops: PlannedJob["stops"] = [];
@@ -145,13 +207,14 @@ router.post("/plan", async (req, res) => {
         const roadDist = nearestDist * ROAD_FACTOR;
         jobDistance += roadDist;
 
-        // คำนวณเวลาเดินทาง = (ระยะทางจริง / ความเร็ว 30 กม./ชม.) * 60 นาที
+        // เวลาเดินทาง = (ระยะทางจริง / ความเร็ว 30 กม./ชม.) * 60 นาที
         const travelTimeMin = (roadDist / SPEED_KMH) * 60;
         currentTimeMin += travelTimeMin;
 
-        // เช็คว่าส่งเลทหรือไม่ (หลัง 12:30 = 750 min)
+        // เลทถ้าเกิน 12:30 (750 นาที)
         const isLate = currentTimeMin > DEADLINE_MIN ? 1 : 0;
         const arrivalTimeStr = toDateTime(planDate, currentTimeMin);
+        if (currentTimeMin > latestArrivalMin) latestArrivalMin = currentTimeMin;
 
         stops.push({
           order_id: nextStop.order_id,
@@ -165,21 +228,21 @@ router.post("/plan", async (req, res) => {
           google_maps_link: `https://www.google.com/maps/search/?api=1&query=${nextStop.latitude},${nextStop.longitude}`,
         });
 
-        // จุดส่งถัดไป + เวลาบริการส่งของ (3 นาที)
+        // เวลาบริการส่งของ ณ จุดนี้
         currentTimeMin += SERVICE_MIN;
         curLat = nextStop.latitude;
         curLng = nextStop.longitude;
       }
 
-      // วิ่งกลับร้าน
+      // วิ่งกลับร้าน (นับรวมในระยะทางที่คิดค่าส่ง)
       const returnDist = distanceKm(curLat, curLng, SHOP.latitude, SHOP.longitude) * ROAD_FACTOR;
       jobDistance += returnDist;
 
       const finalDistance = round2(jobDistance);
-      const fuelCost = round2(finalDistance * FUEL_BAHT_PER_KM);
+      const riderFee = calcRiderFee(totalBoxes, finalDistance);
 
       totalPlanDistance += finalDistance;
-      totalPlanFuel += fuelCost;
+      totalPlanFee += riderFee;
 
       plannedJobs.push({
         rider_name: riderName,
@@ -187,18 +250,18 @@ router.post("/plan", async (req, res) => {
         route_color: routeColor,
         total_boxes: totalBoxes,
         distance_km: finalDistance,
-        fuel_cost: fuelCost,
+        fuel_cost: riderFee,
         stops,
       });
     }
 
     totalPlanDistance = round2(totalPlanDistance);
-    totalPlanFuel = round2(totalPlanFuel);
+    totalPlanFee = round2(totalPlanFee);
 
     // บันทึกลงตาราง route_plan
     const [planResult] = await connection.query(
       `INSERT INTO route_plan (plan_date, plan_status, total_distance_km, total_fuel_cost) VALUES (?, 'planned', ?, ?)`,
-      [planDate, totalPlanDistance, totalPlanFuel]
+      [planDate, totalPlanDistance, totalPlanFee]
     );
     const planId = (planResult as any).insertId;
 
@@ -227,14 +290,24 @@ router.post("/plan", async (req, res) => {
 
     await connection.commit();
 
+    const totalBoxes = plannedJobs.reduce((sum, j) => sum + j.total_boxes, 0);
+    const lateStopsCount = plannedJobs.reduce(
+      (sum, j) => sum + j.stops.filter((s) => s.is_late === 1).length,
+      0
+    );
+
     res.status(201).json({
       message: "Route plan created successfully",
       plan_id: planId,
       plan_date: planDate,
       total_distance_km: totalPlanDistance,
-      total_fuel_cost: totalPlanFuel,
+      total_fuel_cost: totalPlanFee, // = ค่าจ้างไรเดอร์รวม
       riders_count: plannedJobs.length,
       orders_count: pendingOrders.length,
+      total_boxes: totalBoxes,
+      late_stops_count: lateStopsCount,
+      finish_time: toDateTime(planDate, latestArrivalMin),
+      ...calcProfitSummary(totalBoxes, totalPlanFee),
       jobs: plannedJobs,
     });
   } catch (error: any) {
@@ -313,9 +386,26 @@ router.get("/:plan_id", async (req, res) => {
       };
     });
 
+    // สรุปภาพรวม: กล่อง / จุดเลท / เวลาถึงจุดสุดท้าย / กำไร
+    const totalBoxes = jobs.reduce((sum, j) => sum + Number(j.total_boxes || 0), 0);
+    const totalRiderFee = Number(plan.total_fuel_cost || 0);
+    const lateStopsCount = allStops.filter((s) => Boolean(s.is_late)).length;
+
+    let finishTime: any = null;
+    for (const s of allStops) {
+      if (!s.arrival_time) continue;
+      if (finishTime === null || new Date(s.arrival_time) > new Date(finishTime)) {
+        finishTime = s.arrival_time;
+      }
+    }
+
     res.json({
       ...plan,
       shop: SHOP,
+      total_boxes: totalBoxes,
+      late_stops_count: lateStopsCount,
+      finish_time: finishTime,
+      ...calcProfitSummary(totalBoxes, totalRiderFee),
       jobs: jobsWithStops,
     });
   } catch (error) {
@@ -340,7 +430,7 @@ router.delete("/:plan_id", async (req, res) => {
     );
     const orderList = (ordersInPlan as any[]).map((r) => r.order_id);
 
-    // ปรับสถานะ orders ที่ยังไม่ส่ง (assigned) กลับเป็น pending
+    // ปรับสถานะ orders ที่ยังไม่ส่ง กลับเป็น pending
     if (orderList.length > 0) {
       await connection.query(
         `UPDATE orders SET order_status = 'pending' WHERE order_id IN (?) AND order_status <> 'delivered'`,
@@ -348,7 +438,7 @@ router.delete("/:plan_id", async (req, res) => {
       );
     }
 
-    // ลบ route_plan (เนื่องจากมี CASCADE DELETE ใน DB จะลบ delivery_job และ job_stop ให้อัตโนมัติ)
+    // ลบ route_plan (CASCADE DELETE จะลบ delivery_job และ job_stop ให้อัตโนมัติ)
     const [delResult] = await connection.query(
       "DELETE FROM route_plan WHERE plan_id = ?",
       [planId]
